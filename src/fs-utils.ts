@@ -3,7 +3,7 @@ import { access, stat } from "node:fs/promises";
 export type PathKind = "missing" | "file" | "directory" | "other";
 
 function hasErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && Reflect.get(error, "code") === code;
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 export async function pathExists(filePath: string): Promise<boolean> {

@@ -41,7 +41,7 @@ describe("generateIndexSkill", () => {
 
       Use this skill to decide whether a specialized managed skill should be loaded for the user's request.
 
-      Before applying any managed skill, read the full nested \`SKILL.md\` file listed in the table. Do not rely on this index alone when executing a task.
+      Before applying any managed skill, read the full \`SKILL.md\` file listed in the table. Do not rely on this index alone when executing a task.
 
       ## Managed Skills
 

@@ -3,12 +3,16 @@ import matter from "gray-matter";
 
 import type { SkillOrigin, SkillRecord } from "./types.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function readStringField(data: unknown, fieldName: string): string | null {
-  if (typeof data !== "object" || data === null) {
+  if (!isRecord(data)) {
     return null;
   }
 
-  const value = Reflect.get(data, fieldName);
+  const value = data[fieldName];
   if (typeof value !== "string") {
     return null;
   }

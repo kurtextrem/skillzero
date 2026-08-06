@@ -1,5 +1,15 @@
 export type SkillOrigin = "active" | "managed";
 
+export type InvocationTarget = "claude" | "cursor" | "codex" | "copilot" | "gemini";
+
+export interface DiscoveredSkillsRoot {
+  // `path` preserves the first usable user-facing path, while `realPath` lets
+  // discovery collapse aliases such as .agents/skills -> .claude/skills.
+  path: string;
+  realPath: string;
+  aliases: string[];
+}
+
 export interface SkillRecord {
   id: string;
   title: string;

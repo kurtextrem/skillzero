@@ -13,6 +13,24 @@ interface HandoffState {
   managedIds: string[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isHandoffState(value: unknown): value is HandoffState {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const version = value["version"];
+  const managedIds = value["managedIds"];
+  return (
+    version === 1 &&
+    Array.isArray(managedIds) &&
+    managedIds.every((id) => typeof id === "string" && id.length > 0)
+  );
+}
+
 function statePath(inventory: SkillInventory): string {
   return path.join(inventory.indexSkillPath, HANDOFF_STATE_FILE_NAME);
 }
@@ -25,13 +43,7 @@ function parseHandoffState(content: string, filePath: string): HandoffState {
     throw new SkillzeroError(`Invalid skillzero handoff state: ${filePath}`);
   }
 
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !Array.isArray(value.managedIds) ||
-    value.version !== 1 ||
-    value.managedIds.some((id) => typeof id !== "string" || id.length === 0)
-  ) {
+  if (!isHandoffState(value)) {
     throw new SkillzeroError(`Invalid skillzero handoff state: ${filePath}`);
   }
 
@@ -52,6 +64,12 @@ export async function readHandoffState(inventory: SkillInventory): Promise<Hando
   }
 
   return parseHandoffState(await readFile(filePath, "utf8"), filePath);
+}
+
+export async function clearHandoffState(inventory: SkillInventory): Promise<void> {
+  // Selecting a different root-wide layout supersedes a temporary move handoff.
+  // Removing only this snapshot leaves any user-managed skill folders untouched.
+  await rm(statePath(inventory), { force: true });
 }
 
 export async function applyHandoff(plan: MovePlan, inventory: SkillInventory): Promise<void> {

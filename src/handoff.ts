@@ -76,7 +76,9 @@ export async function applyHandoff(plan: MovePlan, inventory: SkillInventory): P
   const filePath = statePath(inventory);
   const state: HandoffState = {
     version: 1,
-    managedIds: inventory.managedSkills.map((skill) => skill.id).sort((left, right) => left.localeCompare(right)),
+    managedIds: inventory.managedSkills
+      .map((skill) => skill.id)
+      .sort((left, right) => left.localeCompare(right)),
   };
 
   // Record the intended index before moving anything. If a later filesystem

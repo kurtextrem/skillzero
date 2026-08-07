@@ -2,18 +2,21 @@ import { readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 
 import { applyMoveOperations, applyMovePlan } from "./apply.js";
-import {
-  collectionConfigPath,
-  collectionDirectoryPath,
-  collectionsPath,
-} from "./collections.js";
+import { collectionConfigPath, collectionDirectoryPath, collectionsPath } from "./collections.js";
 import { GENERATED_MARKER, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { clearRedoState, readRedoState, writeRedoState } from "./history.js";
-import { applyInPlacePlan, buildInPlacePlan, formatInPlacePlan, readInPlaceState } from "./in-place.js";
+import {
+  applyInPlacePlan,
+  buildInPlacePlan,
+  formatInPlacePlan,
+  readInPlaceState,
+} from "./in-place.js";
 import { clearHandoffState, readHandoffState } from "./handoff.js";
 import { getPathKind } from "./fs-utils.js";
+import { clearKnownSkillIds, readKnownSkillIds, writeKnownSkillIds } from "./known-skills.js";
 import { buildMovePlan, formatMovePlan } from "./plan.js";
+import { EMOJI } from "./ui.js";
 
 import type { InPlacePlan } from "./in-place.js";
 import type { RedoState } from "./history.js";
@@ -62,7 +65,10 @@ function skillIds(inventory: SkillInventory): string[] {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function filterCollections(collections: SkillCollection[], availableIds: Set<string>): SkillCollection[] {
+function filterCollections(
+  collections: SkillCollection[],
+  availableIds: Set<string>,
+): SkillCollection[] {
   // A skill deleted while the layout was undone should stay deleted instead
   // of preventing every other remembered skill from being restored.
   return collections.map((collection) => ({
@@ -93,11 +99,14 @@ export async function buildUndoPlan(inventory: SkillInventory): Promise<UndoPlan
     throw new SkillzeroError("No skillzero changes found in " + inventory.rootPath + ".");
   }
 
+  const knownSkillIds = (await readKnownSkillIds(inventory.rootPath)) ?? skillIds(inventory);
+
   if (inPlaceState !== null) {
     const redoState: RedoState = {
       version: 1,
       strategy: "in-place",
       managedIds: inPlaceState.skills.map((skill) => skill.id),
+      knownSkillIds,
       collections: inventory.collections,
     };
     const inPlacePlan = await buildInPlacePlan(inventory, [], inPlaceState, []);
@@ -108,6 +117,7 @@ export async function buildUndoPlan(inventory: SkillInventory): Promise<UndoPlan
     version: 1,
     strategy: "move",
     managedIds: handoffState?.managedIds ?? inventory.managedSkills.map((skill) => skill.id),
+    knownSkillIds,
     collections: inventory.collections,
   };
   const movePlan = await buildMovePlan(inventory, []);
@@ -141,7 +151,9 @@ export async function buildRedoPlan(inventory: SkillInventory): Promise<RedoPlan
     );
   }
   if (await readInPlaceState(inventory)) {
-    throw new SkillzeroError("In-place skills are already configured in " + inventory.rootPath + ".");
+    throw new SkillzeroError(
+      "In-place skills are already configured in " + inventory.rootPath + ".",
+    );
   }
 
   const inPlacePlan = await buildInPlacePlan(inventory, managedIds, null, collections);
@@ -168,7 +180,10 @@ async function removeGeneratedArtifacts(inventory: SkillInventory): Promise<void
   // Only files recognized as generated are removed. Extra user files under the
   // reserved index directory make the directory remain in place.
   for (const collectionId of inventory.generatedCollectionIds) {
-    const skillFile = path.join(collectionDirectoryPath(inventory.indexSkillPath, collectionId), SKILL_FILE_NAME);
+    const skillFile = path.join(
+      collectionDirectoryPath(inventory.indexSkillPath, collectionId),
+      SKILL_FILE_NAME,
+    );
     await removeGeneratedFile(skillFile, "collection skill");
   }
 
@@ -216,6 +231,7 @@ export async function applyUndoPlan(plan: UndoPlan, inventory: SkillInventory): 
 
   await clearHandoffState(inventory);
   await removeGeneratedArtifacts(inventory);
+  await clearKnownSkillIds(inventory.rootPath);
 }
 
 export async function applyRedoPlan(plan: RedoPlan, inventory: SkillInventory): Promise<void> {
@@ -226,6 +242,7 @@ export async function applyRedoPlan(plan: RedoPlan, inventory: SkillInventory): 
   }
 
   await clearHandoffState(inventory);
+  await writeKnownSkillIds(inventory.rootPath, plan.state.knownSkillIds);
   await clearRedoState(inventory.rootPath);
 }
 
@@ -233,28 +250,30 @@ function formatUndoOperations(plan: UndoPlan): string[] {
   const lines: string[] = [];
   if (plan.strategy === "move") {
     for (const operation of plan.movePlan.operations) {
-      lines.push("- Restore to root: " + operation.id);
+      lines.push(`- ${EMOJI.restore}  Restore to root: ${operation.id}`);
     }
   } else {
     for (const operation of plan.inPlacePlan.operations) {
-      lines.push("- Restore the previous disable-model-invocation value: " + operation.id);
+      lines.push(
+        `- ${EMOJI.unlock}  Restore the previous disable-model-invocation value: ${operation.id}`,
+      );
     }
   }
 
   if (lines.length === 0) {
-    lines.push("- No skill folders or metadata need to be restored.");
+    lines.push(`- ${EMOJI.info}  No skill folders or metadata need to be restored.`);
   }
-  lines.push("- Remove generated skill-index files.");
-  lines.push("- Keep a redo record so the layout can be restored.");
+  lines.push(`- ${EMOJI.remove}  Remove generated skill-index files.`);
+  lines.push(`- ${EMOJI.redo}  Keep a redo record so the layout can be restored.`);
   return lines;
 }
 
 export function formatUndoPlan(plan: UndoPlan): string {
-  return ["Undo changes:", ...formatUndoOperations(plan)].join("\n");
+  return [`${EMOJI.restore}  Undo changes:`, ...formatUndoOperations(plan)].join("\n");
 }
 
 export function formatRedoPlan(plan: RedoPlan): string {
-  const lines = ["Redo changes:"];
+  const lines = [`${EMOJI.redo}  Redo changes:`];
   if (plan.strategy === "move") {
     lines.push(...formatMovePlan(plan.movePlan).split("\n").slice(1));
   } else {

@@ -42,7 +42,9 @@ description: Improve UI quality.
     await mkdir(indexPath, { recursive: true });
     await writeFile(path.join(indexPath, "SKILL.md"), "# Manual Index\n", "utf8");
 
-    await expect(scanSkills(rootPath)).rejects.toThrow("Refusing to overwrite non-generated index skill");
+    await expect(scanSkills(rootPath)).rejects.toThrow(
+      "Refusing to overwrite non-generated index skill",
+    );
   });
 
   it("finds a skill whose directory is a symbolic link", async () => {
@@ -58,7 +60,9 @@ description: Improve UI quality.
     const inventory = await scanSkills(rootPath);
 
     expect(inventory.activeSkills.map((skill) => skill.id)).toEqual(["linked-skill"]);
-    expect(inventory.activeSkills[0]?.skillFile).toBe(path.join(rootPath, "linked-skill", "SKILL.md"));
+    expect(inventory.activeSkills[0]?.skillFile).toBe(
+      path.join(rootPath, "linked-skill", "SKILL.md"),
+    );
   });
 
   it("deduplicates aliases of one skill within a skills root", async () => {
@@ -99,7 +103,9 @@ description: Improve UI quality.
     const agentsRoot = path.join(projectPath, ".agents", "skills");
     await writeSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
 
-    await expect(discoverSkillsRootsAtPath(path.join(projectPath, ".agents"), null)).resolves.toEqual([
+    await expect(
+      discoverSkillsRootsAtPath(path.join(projectPath, ".agents"), null),
+    ).resolves.toEqual([
       {
         path: agentsRoot,
         realPath: await realpath(agentsRoot),

@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { applyMovePlan } from "../src/apply.js";
-import { buildMovePlan } from "../src/plan.js";
+import { buildMovePlan, formatMovePlan } from "../src/plan.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeManagedSkill, writeSkill } from "./helpers.js";
 
@@ -47,6 +47,22 @@ describe("buildMovePlan", () => {
     expect(plan.finalManagedSkills.map((skill) => skill.id)).toEqual(["docs"]);
   });
 
+  it("reports generated files as unchanged for a no-op plan", async () => {
+    const rootPath = await createTempRoot();
+    await writeSkill(rootPath, "docs", "---\ndescription: Write docs.\n---\n");
+
+    const inventory = await scanSkills(rootPath);
+    await applyMovePlan(await buildMovePlan(inventory, ["docs"]));
+
+    const refreshedInventory = await scanSkills(rootPath);
+    const plan = await buildMovePlan(refreshedInventory, ["docs"]);
+
+    expect(plan.indexChanged).toBe(false);
+    expect(plan.collectionPlan.collectionsChanged).toBe(false);
+    expect(formatMovePlan(plan)).toContain("- 📝 No update to 1 managed skill(s).");
+    expect(formatMovePlan(plan)).toContain("- 📚 No update to collections.");
+  });
+
   it("rejects duplicate active and managed skill folder names", async () => {
     const rootPath = await createTempRoot();
     await writeSkill(rootPath, "docs", "---\ndescription: Active docs.\n---\n");
@@ -54,7 +70,9 @@ describe("buildMovePlan", () => {
 
     const inventory = await scanSkills(rootPath);
 
-    await expect(buildMovePlan(inventory, ["docs"])).rejects.toThrow("Duplicate active and managed skill names");
+    await expect(buildMovePlan(inventory, ["docs"])).rejects.toThrow(
+      "Duplicate active and managed skill names",
+    );
   });
 
   it("rejects restore destinations that already exist", async () => {
@@ -85,10 +103,16 @@ describe("buildMovePlan", () => {
     await applyMovePlan(plan);
 
     await expect(
-      access(path.join(rootPath, "skill-index", "skills", "manual-only", "SKILL.md"), constants.F_OK),
+      access(
+        path.join(rootPath, "skill-index", "skills", "manual-only", "SKILL.md"),
+        constants.F_OK,
+      ),
     ).rejects.toThrow();
     await expect(
-      access(path.join(rootPath, "skill-index", "skills", "manual-only", "_SKILL.md"), constants.F_OK),
+      access(
+        path.join(rootPath, "skill-index", "skills", "manual-only", "_SKILL.md"),
+        constants.F_OK,
+      ),
     ).resolves.toBeUndefined();
     await expect(scanSkills(rootPath)).resolves.toMatchObject({
       managedSkills: [

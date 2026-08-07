@@ -1,10 +1,26 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { access, constants } from "node:fs/promises";
+import { access, constants, readFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnSyncMock = vi.hoisted(() => vi.fn());
+const promptSelectMock = vi.hoisted(() => vi.fn());
+const promptTextMock = vi.hoisted(() => vi.fn());
+const promptConfirmMock = vi.hoisted(() => vi.fn());
+const visibleMultiselectMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
+vi.mock("@clack/prompts", async () => {
+  const actual = await vi.importActual<typeof import("@clack/prompts")>("@clack/prompts");
+  return {
+    ...actual,
+    select: promptSelectMock,
+    text: promptTextMock,
+    confirm: promptConfirmMock,
+  };
+});
+vi.mock("../src/multiselect.js", () => ({
+  promptVisibleMultiselect: visibleMultiselectMock,
+}));
 
 import { runCli } from "../src/cli.js";
 import { createTempRoot, writeManagedSkill } from "./helpers.js";
@@ -72,6 +88,10 @@ describe("skillzero update", () => {
   beforeEach(() => {
     spawnSyncMock.mockReset();
     spawnSyncMock.mockReturnValue({ status: 0, error: undefined });
+    promptSelectMock.mockReset();
+    promptTextMock.mockReset();
+    promptConfirmMock.mockReset();
+    visibleMultiselectMock.mockReset();
   });
 
   it("updates every discovered project root, forwards skills args, and rebuilds the indexes", async () => {
@@ -82,26 +102,53 @@ describe("skillzero update", () => {
     await writeManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
 
     spawnSyncMock.mockImplementation(() => {
-      writeSkillSynchronously(agentsRoot, "new-shared", "---\ndescription: New shared skill.\n---\n");
+      writeSkillSynchronously(
+        agentsRoot,
+        "new-shared",
+        "---\ndescription: |\n  New shared skill.\n  - Nested details should stay out of the notification row.\n---\n",
+      );
       writeSkillSynchronously(codexRoot, "new-codex", "---\ndescription: New Codex skill.\n---\n");
       return { status: 0, error: undefined };
     });
 
-    const result = await captureRunFrom(projectPath, ["update", "--codex", "--yes", "--", "-p", "-y"]);
+    const result = await captureRunFrom(projectPath, [
+      "update",
+      "--codex",
+      "--yes",
+      "--",
+      "-p",
+      "-y",
+    ]);
 
     expect(result.code).toBe(0);
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      "skills",
-      ["update", "-p", "-y"],
-      { stdio: "inherit" },
-    );
-    expect(result.stdout).toContain("New skills available");
+    expect(spawnSyncMock).toHaveBeenCalledWith("skills", ["update", "-p", "-y"], {
+      stdio: "inherit",
+    });
+    expect(result.stdout).toContain("New skills found");
+    expect(result.stdout).toContain("- new-shared — New shared skill.");
+    expect(result.stdout).not.toContain("Nested details should stay out of the notification row.");
     await expect(exists(path.join(agentsRoot, "skill-index", "SKILL.md"))).resolves.toBe(true);
     await expect(exists(path.join(codexRoot, "skill-index", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md"))).resolves.toBe(true);
+    await expect(
+      exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md")),
+    ).resolves.toBe(true);
+    await expect(
+      exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md")),
+    ).resolves.toBe(true);
     await expect(exists(path.join(agentsRoot, "new-shared", "SKILL.md"))).resolves.toBe(true);
     await expect(exists(path.join(codexRoot, "new-codex", "SKILL.md"))).resolves.toBe(true);
+
+    const secondResult = await captureRunFrom(projectPath, [
+      "update",
+      "--codex",
+      "--yes",
+      "--",
+      "-p",
+      "-y",
+    ]);
+
+    expect(secondResult.code).toBe(0);
+    expect(secondResult.stdout).not.toContain("New skills found");
   });
 
   it("leaves the original layout released when skills update fails", async () => {
@@ -115,6 +162,114 @@ describe("skillzero update", () => {
     expect(result.stderr).toContain("skills update exited with status 1");
     await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);
     await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(false);
-    await expect(exists(path.join(rootPath, "skill-index", ".skillzero-handoff.json"))).resolves.toBe(true);
+    await expect(
+      exists(path.join(rootPath, "skill-index", ".skillzero-handoff.json")),
+    ).resolves.toBe(true);
+  });
+
+  it("offers collection setup during initial configuration", async () => {
+    const rootPath = await createTempRoot();
+    await writeSkillSynchronously(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
+
+    promptConfirmMock.mockResolvedValue(true);
+    promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+    promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("Read for design tasks.");
+    visibleMultiselectMock
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
+
+    const result = await captureRunFrom(rootPath, ["--codex"]);
+
+    expect(result.code).toBe(0);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+    ).resolves.toBe(true);
+    expect(promptSelectMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips apply confirmation when a sync preview has no changes", async () => {
+    const rootPath = await createTempRoot();
+    await writeSkillSynchronously(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
+
+    promptConfirmMock.mockResolvedValue(true);
+    promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+    promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("Read for design tasks.");
+    visibleMultiselectMock
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
+
+    await expect(captureRunFrom(rootPath, ["--codex"])).resolves.toMatchObject({
+      code: 0,
+    });
+
+    promptSelectMock.mockReset();
+    promptTextMock.mockReset();
+    visibleMultiselectMock.mockReset();
+    promptConfirmMock.mockImplementation(() => {
+      throw new Error("confirmation should not be requested for a no-op");
+    });
+    visibleMultiselectMock.mockResolvedValue({
+      status: "ok",
+      selectedIds: ["existing"],
+    });
+
+    const result = await captureRunFrom(rootPath, []);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("No changes needed.");
+    expect(result.stdout).not.toContain("Apply these changes?");
+  });
+
+  it("offers collection setup when syncing an existing path without collections", async () => {
+    const rootPath = await createTempRoot();
+    await writeManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
+
+    promptConfirmMock.mockResolvedValue(true);
+    promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+    promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("Read for design tasks.");
+    visibleMultiselectMock
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
+      .mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
+
+    const result = await captureRunFrom(rootPath, ["--codex"]);
+
+    expect(result.code).toBe(0);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+    ).resolves.toBe(true);
+    expect(promptSelectMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for collection assignments when a new skill is selected", async () => {
+    const rootPath = await createTempRoot();
+    await writeManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
+    spawnSyncMock.mockImplementation(() => {
+      writeSkillSynchronously(rootPath, "new-skill", "---\ndescription: New skill.\n---\n");
+      return { status: 0, error: undefined };
+    });
+
+    promptConfirmMock.mockResolvedValue(true);
+    promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+    promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("Read for design tasks.");
+    visibleMultiselectMock
+      .mockResolvedValueOnce({
+        status: "ok",
+        selectedIds: ["existing", "new-skill"],
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        selectedIds: ["existing", "new-skill"],
+      });
+
+    const result = await captureRunFrom(rootPath, ["update", "--codex"]);
+
+    expect(result.code).toBe(0);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+    ).resolves.toBe(true);
+    await expect(
+      readFile(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"), "utf8"),
+    ).resolves.toContain("new-skill");
+    expect(promptSelectMock).toHaveBeenCalledTimes(2);
   });
 });

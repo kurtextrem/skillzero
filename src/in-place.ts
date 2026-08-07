@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import matter from "gray-matter";
+import matter from "@11ty/gray-matter";
 
 import { DISABLE_MODEL_INVOCATION_FIELD, IN_PLACE_STATE_FILE_NAME } from "./constants.js";
 import { applyCollectionPlan, buildCollectionPlan, formatCollectionPlan } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
-import { getPathKind } from "./fs-utils.js";
+import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
 import { generateIndexSkill } from "./index-skill.js";
+import { EMOJI } from "./ui.js";
 
 import type { CollectionPlan, SkillInventory, SkillRecord } from "./types.js";
 
@@ -42,7 +43,9 @@ export interface InPlacePlan {
   finalManagedSkills: SkillRecord[];
   operations: InPlaceOperation[];
   nextState: InPlaceState | null;
+  stateChanged: boolean;
   collectionPlan: CollectionPlan;
+  indexChanged: boolean;
 }
 
 function statePath(inventory: SkillInventory): string {
@@ -71,7 +74,8 @@ function isInPlaceSkillState(value: unknown): value is InPlaceSkillState {
     typeof id === "string" &&
     id.length > 0 &&
     (owner === "skillzero" || owner === "external") &&
-    (typeof originalDisableModelInvocation === "boolean" || originalDisableModelInvocation === null) &&
+    (typeof originalDisableModelInvocation === "boolean" ||
+      originalDisableModelInvocation === null) &&
     (typeof appliedContentHash === "string" || appliedContentHash === null)
   );
 }
@@ -134,7 +138,9 @@ function readDisableModelInvocation(content: string, skillFile: string): Origina
     return null;
   }
   if (typeof value !== "boolean") {
-    throw new SkillzeroError(`${DISABLE_MODEL_INVOCATION_FIELD} must be true or false: ${skillFile}`);
+    throw new SkillzeroError(
+      `${DISABLE_MODEL_INVOCATION_FIELD} must be true or false: ${skillFile}`,
+    );
   }
 
   return value;
@@ -175,7 +181,8 @@ function frontmatterBounds(content: string): FrontmatterBounds | null {
   throw new SkillzeroError("SKILL.md frontmatter is missing its closing delimiter.");
 }
 
-const DISABLE_MODEL_INVOCATION_LINE = /^(?:"disable-model-invocation"|'disable-model-invocation'|disable-model-invocation):[^\r\n]*(?:\r?\n|$)/m;
+const DISABLE_MODEL_INVOCATION_LINE =
+  /^(?:"disable-model-invocation"|'disable-model-invocation'|disable-model-invocation):[^\r\n]*(?:\r?\n|$)/m;
 
 // Rewrite only the one policy line. Skills are user-authored documents, so a
 // YAML serializer would create noisy unrelated formatting changes on every sync.
@@ -193,7 +200,8 @@ function withDisableModelInvocation(content: string, value: OriginalModelInvocat
   const frontmatter = content.slice(bounds.openingEnd, bounds.closingStart);
   const beforeFrontmatter = content.slice(0, bounds.openingEnd);
   const afterFrontmatter = content.slice(bounds.closingStart);
-  const replacement = value === null ? "" : `${DISABLE_MODEL_INVOCATION_FIELD}: ${value}${bounds.lineEnding}`;
+  const replacement =
+    value === null ? "" : `${DISABLE_MODEL_INVOCATION_FIELD}: ${value}${bounds.lineEnding}`;
 
   if (DISABLE_MODEL_INVOCATION_LINE.test(frontmatter)) {
     return `${beforeFrontmatter}${frontmatter.replace(DISABLE_MODEL_INVOCATION_LINE, replacement)}${afterFrontmatter}`;
@@ -219,6 +227,12 @@ function sortedState(skills: InPlaceSkillState[]): InPlaceState | null {
     version: 1,
     skills: skills.sort((left, right) => left.id.localeCompare(right.id)),
   };
+}
+
+function statesDiffer(previousState: InPlaceState | null, nextState: InPlaceState | null): boolean {
+  // The state file is part of the applied layout. Compare its normalized JSON
+  // shape so a no-op sync does not ask for confirmation or rewrite metadata.
+  return JSON.stringify(previousState) !== JSON.stringify(nextState);
 }
 
 export async function buildInPlacePlan(
@@ -315,39 +329,60 @@ export async function buildInPlacePlan(
 
   finalManagedSkills.sort((left, right) => left.id.localeCompare(right.id));
   const collectionPlan = await buildCollectionPlan(inventory, finalManagedSkills, collections);
+  const indexContent = generateIndexSkill(
+    finalManagedSkills,
+    inventory.indexSkillPath,
+    collectionPlan.finalCollections,
+  );
+  const nextState = sortedState(nextSkills);
   return {
     indexSkillPath: inventory.indexSkillPath,
     indexSkillFile: inventory.indexSkillFile,
     finalManagedSkills,
     operations,
-    nextState: sortedState(nextSkills),
+    nextState,
+    stateChanged: statesDiffer(previousState, nextState),
     collectionPlan,
+    indexChanged: await hasDifferentFileContent(inventory.indexSkillFile, indexContent),
   };
 }
 
 export function formatInPlacePlan(plan: InPlacePlan): string {
-  const lines = ["Planned changes:", "- Keep selected skill folders in place."];
+  const lines = [
+    `${EMOJI.plan} Planned changes:`,
+    `- ${EMOJI.keep}  Keep selected skill folders in place.`,
+  ];
 
   for (const operation of plan.operations) {
     const verb =
       operation.kind === "disable-model-invocation"
         ? "Set disable-model-invocation: true"
         : "Restore the previous disable-model-invocation value";
-    lines.push(`- ${verb}: ${operation.id}`);
+    const marker = operation.kind === "disable-model-invocation" ? EMOJI.lock : EMOJI.unlock;
+    lines.push(`- ${marker}  ${verb}: ${operation.id}`);
   }
 
-  lines.push(`- Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`);
+  lines.push(
+    plan.indexChanged
+      ? `- ${EMOJI.index} Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`
+      : `- ${EMOJI.index} No update to ${plan.finalManagedSkills.length} managed skill(s).`,
+  );
   lines.push(formatCollectionPlan(plan.collectionPlan));
   return lines.join("\n");
 }
 
-export async function applyInPlacePlan(plan: InPlacePlan, inventory: SkillInventory): Promise<void> {
+export async function applyInPlacePlan(
+  plan: InPlacePlan,
+  inventory: SkillInventory,
+): Promise<void> {
   // Verify the entire preview before writing so a user edit made at the
   // confirmation prompt cannot be overwritten by a partial sync.
   for (const operation of plan.operations) {
     const content = await readFile(operation.skill.skillFile, "utf8");
     if (contentHash(content) !== operation.expectedContentHash) {
-      throw new SkillzeroError(`SKILL.md changed while waiting for confirmation: ${operation.skill.skillFile}`);
+      throw new SkillzeroError(
+        `SKILL.md changed while waiting for confirmation: ${operation.skill.skillFile}`,
+      );
     }
   }
 
@@ -359,7 +394,11 @@ export async function applyInPlacePlan(plan: InPlacePlan, inventory: SkillInvent
   await applyCollectionPlan(plan.collectionPlan, plan.finalManagedSkills);
   await writeFile(
     plan.indexSkillFile,
-    generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath, plan.collectionPlan.finalCollections),
+    generateIndexSkill(
+      plan.finalManagedSkills,
+      plan.indexSkillPath,
+      plan.collectionPlan.finalCollections,
+    ),
     "utf8",
   );
 

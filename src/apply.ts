@@ -42,7 +42,11 @@ export async function applyMovePlan(plan: MovePlan): Promise<void> {
   await applyCollectionPlan(plan.collectionPlan, plan.finalManagedSkills);
   await writeFile(
     plan.indexSkillFile,
-    generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath, plan.collectionPlan.finalCollections),
+    generateIndexSkill(
+      plan.finalManagedSkills,
+      plan.indexSkillPath,
+      plan.collectionPlan.finalCollections,
+    ),
     "utf8",
   );
 }

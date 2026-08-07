@@ -13,7 +13,11 @@ export async function writeSkill(rootPath: string, name: string, content: string
   return directory;
 }
 
-export async function writeManagedSkill(rootPath: string, name: string, content: string): Promise<string> {
+export async function writeManagedSkill(
+  rootPath: string,
+  name: string,
+  content: string,
+): Promise<string> {
   const directory = path.join(rootPath, "skill-index", "skills", name);
   await mkdir(directory, { recursive: true });
   await writeFile(path.join(directory, "_SKILL.md"), content, "utf8");

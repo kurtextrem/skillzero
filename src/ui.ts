@@ -2,8 +2,40 @@ import { CLI_NAME, CLI_VERSION } from "./constants.js";
 
 type Color = "cyan" | "green" | "yellow" | "gray" | "white";
 
+// Keep semantic markers consistent so the CLI feels lively without turning
+// every line into decoration.
+export const EMOJI = {
+  active: "🟢",
+  apply: "🚀",
+  cancel: "❌",
+  // Use a variation-selector-free glyph so Clack's preview borders stay aligned
+  // in terminals that measure 🗂️ as one cell.
+  collection: "📚",
+  folder: "📁",
+  // Use a stable two-cell emoji here; some terminals render the text/emoji
+  // presentation of ℹ️ at one cell while Clack reserves two.
+  info: "💡",
+  index: "📝",
+  link: "🔗",
+  lock: "🔒",
+  managed: "📦",
+  move: "📦",
+  new: "✨",
+  plan: "📋",
+  remove: "🗑️",
+  release: "📤",
+  redo: "↪️",
+  restore: "↩️",
+  success: "✅",
+  keep: "📌",
+  unlock: "🔓",
+  update: "🔄",
+  warning: "⚠️",
+} as const;
+
 // Keep the CLI readable in pipes and CI, while still honoring an explicit color override.
-const useColor = "FORCE_COLOR" in process.env || (!("NO_COLOR" in process.env) && process.stdout.isTTY);
+const useColor =
+  "FORCE_COLOR" in process.env || (!("NO_COLOR" in process.env) && process.stdout.isTTY);
 
 const colorCodes: Record<Color, number> = {
   cyan: 36,
@@ -45,6 +77,12 @@ export function dim(value: string): string {
 
 export function text(value: string): string {
   return color(value, "white");
+}
+
+// OSC 8 makes filesystem sources clickable in terminals without coupling the
+// CLI to a platform-specific opener command.
+export function terminalLink(label: string, target: string): string {
+  return `\u001B]8;;${target}\u0007${label}\u001B]8;;\u0007`;
 }
 
 export function printBanner(): void {

@@ -91,8 +91,12 @@ describe("runCli", () => {
     const result = await captureRun([projectPath, "--codex", "--yes"]);
 
     expect(result.code).toBe(0);
-    await expect(exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md"))).resolves.toBe(true);
+    await expect(
+      exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md")),
+    ).resolves.toBe(true);
+    await expect(
+      exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md")),
+    ).resolves.toBe(true);
   });
 
   it("refuses to mutate one SKILL.md linked into separate discovered roots", async () => {
@@ -112,9 +116,8 @@ describe("runCli", () => {
     const result = await captureRun([projectPath, "--codex", "--yes"]);
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("same SKILL.md is linked into multiple roots");
+    expect(result.stderr).toContain("same SKILL.md file is linked in multiple roots");
   });
-
 
   it("syncs an existing positional skills root without a handoff file", async () => {
     const rootPath = await createTempRoot();
@@ -124,7 +127,9 @@ describe("runCli", () => {
 
     expect(result.code).toBe(0);
     await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md"))).resolves.toBe(true);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md")),
+    ).resolves.toBe(true);
   });
 
   it("runs collections as an explicit command", async () => {

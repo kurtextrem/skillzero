@@ -15,6 +15,7 @@ export interface RedoState {
   version: 1;
   strategy: RedoStrategy;
   managedIds: string[];
+  knownSkillIds: string[];
   collections: SkillCollection[];
 }
 
@@ -70,13 +71,24 @@ function parseRedoState(content: string, filePath: string): RedoState {
 
   const strategy = value["strategy"];
   const storedManagedIds = value["managedIds"];
+  const storedKnownSkillIds = value["knownSkillIds"];
   const storedCollections = value["collections"];
   if (
     (strategy !== "move" && strategy !== "in-place") ||
     !Array.isArray(storedManagedIds) ||
+    !Array.isArray(storedKnownSkillIds) ||
     !Array.isArray(storedCollections)
   ) {
     throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
+  }
+
+  const knownSkillIds: string[] = [];
+  for (const storedKnownSkillId of storedKnownSkillIds) {
+    const knownSkillId = readNonEmptyString(storedKnownSkillId);
+    if (knownSkillId === null || knownSkillIds.includes(knownSkillId)) {
+      throw new SkillzeroError(`Invalid redo state: ${filePath}`);
+    }
+    knownSkillIds.push(knownSkillId);
   }
 
   const managedIds: string[] = [];
@@ -100,8 +112,9 @@ function parseRedoState(content: string, filePath: string): RedoState {
   }
 
   managedIds.sort((left, right) => left.localeCompare(right));
+  knownSkillIds.sort((left, right) => left.localeCompare(right));
   collections.sort((left, right) => left.id.localeCompare(right.id));
-  return { version: 1, strategy, managedIds, collections };
+  return { version: 1, strategy, managedIds, knownSkillIds, collections };
 }
 
 export function redoStatePath(rootPath: string): string {
@@ -126,12 +139,17 @@ export async function writeRedoState(rootPath: string, state: RedoState): Promis
     version: 1,
     strategy: state.strategy,
     managedIds: [...new Set(state.managedIds)].sort((left, right) => left.localeCompare(right)),
+    knownSkillIds: [...new Set(state.knownSkillIds)].sort((left, right) =>
+      left.localeCompare(right),
+    ),
     collections: state.collections
       .map((collection) => ({
         id: collection.id,
         title: collection.title,
         description: collection.description,
-        skillIds: [...new Set(collection.skillIds)].sort((left, right) => left.localeCompare(right)),
+        skillIds: [...new Set(collection.skillIds)].sort((left, right) =>
+          left.localeCompare(right),
+        ),
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
   };

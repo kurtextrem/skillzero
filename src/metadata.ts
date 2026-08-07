@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import matter from "gray-matter";
+import matter from "@11ty/gray-matter";
 
 import type { SkillOrigin, SkillRecord } from "./types.js";
 
@@ -62,7 +62,8 @@ export function parseSkillMetadata(content: string, fallbackId: string): ParsedS
   return {
     title,
     description,
-    disableModelInvocation: isRecord(parsed.data) && parsed.data["disable-model-invocation"] === true,
+    disableModelInvocation:
+      isRecord(parsed.data) && parsed.data["disable-model-invocation"] === true,
   };
 }
 

@@ -3,7 +3,9 @@ import path from "node:path";
 import { buildCollectionPlan, formatCollectionPlan } from "./collections.js";
 import { MANAGED_SKILL_FILE_NAME, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
-import { getPathKind } from "./fs-utils.js";
+import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
+import { generateIndexSkill } from "./index-skill.js";
+import { EMOJI } from "./ui.js";
 
 import type { MoveOperation, MovePlan, SkillInventory, SkillRecord } from "./types.js";
 
@@ -43,12 +45,16 @@ async function validateOperationPaths(operations: MoveOperation[]): Promise<void
 
     const sourceSkillFileKind = await getPathKind(operation.fromSkillFile);
     if (sourceSkillFileKind !== "file") {
-      throw new SkillzeroError(`Move source skill file is missing or invalid: ${operation.fromSkillFile}`);
+      throw new SkillzeroError(
+        `Move source skill file is missing or invalid: ${operation.fromSkillFile}`,
+      );
     }
 
     const targetSkillFileKind = await getPathKind(operation.toSkillFile);
     if (targetSkillFileKind !== "missing") {
-      throw new SkillzeroError(`Move destination skill file already exists: ${operation.toSkillFile}`);
+      throw new SkillzeroError(
+        `Move destination skill file already exists: ${operation.toSkillFile}`,
+      );
     }
 
     const destinationKind = await getPathKind(operation.to);
@@ -64,12 +70,16 @@ export async function buildMovePlan(
   collections = inventory.collections,
 ): Promise<MovePlan> {
   if (inventory.indexFileExists && !inventory.indexFileGenerated) {
-    throw new SkillzeroError(`Refusing to overwrite non-generated index skill: ${inventory.indexSkillFile}`);
+    throw new SkillzeroError(
+      `Refusing to overwrite non-generated index skill: ${inventory.indexSkillFile}`,
+    );
   }
 
   const duplicateIds = findDuplicateIds(inventory);
   if (duplicateIds.length > 0) {
-    throw new SkillzeroError(`Duplicate active and managed skill names: ${duplicateIds.join(", ")}`);
+    throw new SkillzeroError(
+      `Duplicate active and managed skill names: ${duplicateIds.join(", ")}`,
+    );
   }
 
   const activeById = mapById(inventory.activeSkills);
@@ -77,7 +87,9 @@ export async function buildMovePlan(
   const knownIds = new Set([...activeById.keys(), ...managedById.keys()]);
   const selectedIdSet = new Set(selectedIds);
 
-  const unknownIds = [...selectedIdSet].filter((id) => !knownIds.has(id)).sort((left, right) => left.localeCompare(right));
+  const unknownIds = [...selectedIdSet]
+    .filter((id) => !knownIds.has(id))
+    .sort((left, right) => left.localeCompare(right));
   if (unknownIds.length > 0) {
     throw new SkillzeroError(`Unknown selected skill names: ${unknownIds.join(", ")}`);
   }
@@ -127,6 +139,11 @@ export async function buildMovePlan(
 
   finalManagedSkills.sort((left, right) => left.id.localeCompare(right.id));
   const collectionPlan = await buildCollectionPlan(inventory, finalManagedSkills, collections);
+  const indexContent = generateIndexSkill(
+    finalManagedSkills,
+    inventory.indexSkillPath,
+    collectionPlan.finalCollections,
+  );
 
   return {
     rootPath: inventory.rootPath,
@@ -136,22 +153,28 @@ export async function buildMovePlan(
     operations,
     finalManagedSkills,
     collectionPlan,
+    indexChanged: await hasDifferentFileContent(inventory.indexSkillFile, indexContent),
   };
 }
 
 export function formatMovePlan(plan: MovePlan): string {
-  const lines = ["Planned changes:"];
+  const lines = [`${EMOJI.plan} Planned changes:`];
 
   if (plan.operations.length === 0) {
-    lines.push("- No skill folders will move.");
+    lines.push(`- ${EMOJI.info} No skill folders will move.`);
   }
 
   for (const operation of plan.operations) {
     const verb = operation.kind === "move-to-index" ? "Move into index" : "Restore to root";
-    lines.push(`- ${verb}: ${operation.id}`);
+    const marker = operation.kind === "move-to-index" ? EMOJI.move : EMOJI.restore;
+    lines.push(`- ${marker}  ${verb}: ${operation.id}`);
   }
 
-  lines.push(`- Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`);
+  lines.push(
+    plan.indexChanged
+      ? `- ${EMOJI.index} Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`
+      : `- ${EMOJI.index} No update to ${plan.finalManagedSkills.length} managed skill(s).`,
+  );
   lines.push(formatCollectionPlan(plan.collectionPlan));
   return lines.join("\n");
 }

@@ -1,4 +1,4 @@
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 
 export type PathKind = "missing" | "file" | "directory" | "other";
 
@@ -38,4 +38,18 @@ export async function getPathKind(filePath: string): Promise<PathKind> {
 
     throw error;
   }
+}
+
+export async function hasDifferentFileContent(
+  filePath: string,
+  expectedContent: string,
+): Promise<boolean> {
+  const kind = await getPathKind(filePath);
+  if (kind !== "file") {
+    // Callers validate destination conflicts before comparing generated files;
+    // missing files are changes, while invalid paths are handled there.
+    return true;
+  }
+
+  return (await readFile(filePath, "utf8")) !== expectedContent;
 }

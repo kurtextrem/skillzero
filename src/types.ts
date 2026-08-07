@@ -11,13 +11,13 @@ export interface DiscoveredSkillsRoot {
 }
 
 export interface SkillRecord {
-	id: string;
-	title: string;
-	description: string;
-	disableModelInvocation: boolean;
-	directory: string;
-	skillFile: string;
-	origin: SkillOrigin;
+  id: string;
+  title: string;
+  description: string;
+  disableModelInvocation: boolean;
+  directory: string;
+  skillFile: string;
+  origin: SkillOrigin;
 }
 
 export interface SkillCollection {
@@ -33,6 +33,7 @@ export interface CollectionPlan {
   collectionConfigFile: string;
   finalCollections: SkillCollection[];
   generatedCollectionIdsToRemove: string[];
+  collectionsChanged: boolean;
 }
 
 export interface SkillInventory {
@@ -70,4 +71,5 @@ export interface MovePlan {
   operations: MoveOperation[];
   finalManagedSkills: SkillRecord[];
   collectionPlan: CollectionPlan;
+  indexChanged: boolean;
 }

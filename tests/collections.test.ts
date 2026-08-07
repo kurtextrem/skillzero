@@ -72,13 +72,17 @@ describe("skill collections", () => {
       collectionConfigPath(indexPath),
       JSON.stringify({
         version: 1,
-        collections: [{ id: "design", title: "Design", description: "Design tasks.", skillIds: [] }],
+        collections: [
+          { id: "design", title: "Design", description: "Design tasks.", skillIds: [] },
+        ],
       }),
       "utf8",
     );
     await writeFile(path.join(collectionPath, "SKILL.md"), "# Manual collection\n", "utf8");
 
-    await expect(scanSkills(rootPath)).rejects.toThrow("Refusing to overwrite non-generated collection skill");
+    await expect(scanSkills(rootPath)).rejects.toThrow(
+      "Refusing to overwrite non-generated collection skill",
+    );
   });
 
   it("keeps collections while removing skills that are restored to the root", async () => {
@@ -94,7 +98,11 @@ describe("skill collections", () => {
       description: "Read for design tasks.",
       skillIds: ["design-skill"],
     };
-    await writeFile(collectionConfigPath(indexPath), JSON.stringify({ version: 1, collections: [collection] }), "utf8");
+    await writeFile(
+      collectionConfigPath(indexPath),
+      JSON.stringify({ version: 1, collections: [collection] }),
+      "utf8",
+    );
 
     const inventory = await scanSkills(rootPath);
     const selectedPlan = await buildMovePlan(inventory, ["design-skill"]);
@@ -115,16 +123,26 @@ describe("skill collections", () => {
       description: "Read for tasks related to design.",
       skillIds: ["design-skill"],
     };
-    await writeFile(collectionConfigPath(indexPath), JSON.stringify({ version: 1, collections: [collection] }), "utf8");
+    await writeFile(
+      collectionConfigPath(indexPath),
+      JSON.stringify({ version: 1, collections: [collection] }),
+      "utf8",
+    );
 
     const inventory = await scanSkills(rootPath);
     const plan = await buildMovePlan(inventory, ["design-skill"]);
     await applyMovePlan(plan);
 
-    const generatedCollection = await readFile(path.join(indexPath, "collections", "design", "SKILL.md"), "utf8");
+    const generatedCollection = await readFile(
+      path.join(indexPath, "collections", "design", "SKILL.md"),
+      "utf8",
+    );
     expect(generatedCollection).toContain("disable-model-invocation: true");
     expect(generatedCollection).toContain("../../skills/design-skill/_SKILL.md");
-    await expect(readCollectionConfig(indexPath)).resolves.toEqual({ version: 1, collections: [collection] });
+    await expect(readCollectionConfig(indexPath)).resolves.toEqual({
+      version: 1,
+      collections: [collection],
+    });
     const refreshedInventory = await scanSkills(rootPath);
     expect(refreshedInventory.collections).toEqual([collection]);
     expect(refreshedInventory.generatedCollectionIds).toEqual(["design"]);
@@ -164,8 +182,13 @@ describe("skill collections", () => {
       skillIds: ["ui-polish"],
     };
 
-    expect(generateCollectionSkill(collection, [managedSkill(rootPath, "ui-polish", "Improve UI quality.")], indexPath))
-      .toMatchInlineSnapshot(`
+    expect(
+      generateCollectionSkill(
+        collection,
+        [managedSkill(rootPath, "ui-polish", "Improve UI quality.")],
+        indexPath,
+      ),
+    ).toMatchInlineSnapshot(`
         "---
         name: design
         description: "Read for tasks related to design."

@@ -78,7 +78,9 @@ describe("generateIndexSkill", () => {
       [collection],
     );
 
-    expect(content).toContain("| Design | Read for tasks related to design. | `collections/design/SKILL.md` |");
+    expect(content).toContain(
+      "| Design | Read for tasks related to design. | `collections/design/SKILL.md` |",
+    );
     expect(content).toContain("| `api-builder` | Build APIs. | `skills/api-builder/_SKILL.md` |");
     expect(content).not.toContain("| `ui-polish` | Improve UI quality.");
   });

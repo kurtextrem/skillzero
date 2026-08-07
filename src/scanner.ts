@@ -8,7 +8,12 @@ import {
   MANAGED_SKILLS_DIR_NAME,
   SKILL_FILE_NAME,
 } from "./constants.js";
-import { collectionsPath, collectionConfigPath, readCollectionConfig, scanGeneratedCollectionIds } from "./collections.js";
+import {
+  collectionsPath,
+  collectionConfigPath,
+  readCollectionConfig,
+  scanGeneratedCollectionIds,
+} from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 import { readSkillRecord } from "./metadata.js";
@@ -30,7 +35,10 @@ async function readSkillFromDirectory(
   return readSkillRecord(id, directory, skillFile, origin);
 }
 
-async function readManagedSkillFromDirectory(directory: string, id: string): Promise<SkillRecord | null> {
+async function readManagedSkillFromDirectory(
+  directory: string,
+  id: string,
+): Promise<SkillRecord | null> {
   const hiddenSkillFile = path.join(directory, MANAGED_SKILL_FILE_NAME);
   const manualSkillFile = path.join(directory, SKILL_FILE_NAME);
   const hiddenSkillFileKind = await getPathKind(hiddenSkillFile);
@@ -130,12 +138,17 @@ export async function scanSkills(rootPath: string): Promise<SkillInventory> {
     const content = await readFile(indexSkillFile, "utf8");
     indexFileGenerated = content.includes(GENERATED_MARKER);
     if (!indexFileGenerated) {
-      throw new SkillzeroError(`Refusing to overwrite non-generated index skill: ${indexSkillFile}`);
+      throw new SkillzeroError(
+        `Refusing to overwrite non-generated index skill: ${indexSkillFile}`,
+      );
     }
   }
 
   const collectionConfig = await readCollectionConfig(indexSkillPath);
-  const generatedCollectionIds = await scanGeneratedCollectionIds(indexSkillPath, collectionConfig.collections);
+  const generatedCollectionIds = await scanGeneratedCollectionIds(
+    indexSkillPath,
+    collectionConfig.collections,
+  );
 
   const activeSkills = (await scanImmediateSkillChildren(resolvedRoot, "active")).filter(
     (skill) => skill.id !== INDEX_SKILL_NAME,

@@ -19,7 +19,10 @@ describe("temporary skills handoff", () => {
 
     const released = await scanSkills(rootPath);
     expect(released.activeSkills.map((skill) => skill.id)).toEqual(["ui-polish"]);
-    await expect(readHandoffState(released)).resolves.toEqual({ version: 1, managedIds: ["ui-polish"] });
+    await expect(readHandoffState(released)).resolves.toEqual({
+      version: 1,
+      managedIds: ["ui-polish"],
+    });
 
     await writeSkill(rootPath, "new-skill", "---\ndescription: Added by skills update.\n---\n");
     const afterUpstreamChange = await scanSkills(rootPath);
@@ -46,9 +49,9 @@ describe("temporary skills handoff", () => {
     const configured = await scanSkills(rootPath);
     expect(configured.activeSkills.map((skill) => skill.id)).toEqual(["ui-polish"]);
     expect(configured.managedSkills).toEqual([]);
-    await expect(readFile(path.join(rootPath, "skill-index", "SKILL.md"), "utf8")).resolves.toContain(
-      "../ui-polish/SKILL.md",
-    );
+    await expect(
+      readFile(path.join(rootPath, "skill-index", "SKILL.md"), "utf8"),
+    ).resolves.toContain("../ui-polish/SKILL.md");
     await expect(readInPlaceState(configured)).resolves.toMatchObject({
       version: 1,
       skills: [
@@ -66,7 +69,10 @@ describe("temporary skills handoff", () => {
     await writeSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
 
     const initialInventory = await scanSkills(rootPath);
-    await applyInPlacePlan(await buildInPlacePlan(initialInventory, ["ui-polish"], null), initialInventory);
+    await applyInPlacePlan(
+      await buildInPlacePlan(initialInventory, ["ui-polish"], null),
+      initialInventory,
+    );
 
     // Simulate skills update replacing the whole skill directory with a version
     // that independently opts into manual-only invocation.

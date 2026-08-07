@@ -8,7 +8,8 @@ import {
   SKILL_FILE_NAME,
 } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
-import { getPathKind } from "./fs-utils.js";
+import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
+import { EMOJI } from "./ui.js";
 
 import type { CollectionPlan, SkillCollection, SkillInventory, SkillRecord } from "./types.js";
 
@@ -166,8 +167,13 @@ async function validateConfiguredCollectionFiles(
       throw new SkillzeroError(`Path conflict: ${skillFile} must be a file.`);
     }
 
-    if (skillFileKind === "file" && !(await readFile(skillFile, "utf8")).includes(GENERATED_MARKER)) {
-      throw new SkillzeroError(`Refusing to overwrite non-generated collection skill: ${skillFile}`);
+    if (
+      skillFileKind === "file" &&
+      !(await readFile(skillFile, "utf8")).includes(GENERATED_MARKER)
+    ) {
+      throw new SkillzeroError(
+        `Refusing to overwrite non-generated collection skill: ${skillFile}`,
+      );
     }
   }
 }
@@ -241,8 +247,13 @@ async function validateCollectionDestinations(plan: CollectionPlan): Promise<voi
       throw new SkillzeroError(`Path conflict: ${skillFile} must be a file.`);
     }
 
-    if (skillFileKind === "file" && !(await readFile(skillFile, "utf8")).includes(GENERATED_MARKER)) {
-      throw new SkillzeroError(`Refusing to overwrite non-generated collection skill: ${skillFile}`);
+    if (
+      skillFileKind === "file" &&
+      !(await readFile(skillFile, "utf8")).includes(GENERATED_MARKER)
+    ) {
+      throw new SkillzeroError(
+        `Refusing to overwrite non-generated collection skill: ${skillFile}`,
+      );
     }
   }
 }
@@ -292,17 +303,46 @@ export async function buildCollectionPlan(
     generatedCollectionIdsToRemove: inventory.generatedCollectionIds
       .filter((id) => !collectionIds.has(id))
       .sort((left, right) => left.localeCompare(right)),
+    collectionsChanged: false,
   };
 
   await validateCollectionDestinations(plan);
-  return plan;
+  let collectionsChanged = await hasDifferentFileContent(
+    plan.collectionConfigFile,
+    `${JSON.stringify({ version: 1, collections: plan.finalCollections }, null, 2)}\n`,
+  );
+
+  if (!collectionsChanged) {
+    for (const collection of plan.finalCollections) {
+      const skillFile = collectionSkillFilePath(plan.indexSkillPath, collection.id);
+      if (
+        await hasDifferentFileContent(
+          skillFile,
+          generateCollectionSkill(collection, finalManagedSkills, plan.indexSkillPath),
+        )
+      ) {
+        collectionsChanged = true;
+        break;
+      }
+    }
+  }
+
+  if (!collectionsChanged && plan.generatedCollectionIdsToRemove.length > 0) {
+    collectionsChanged = true;
+  }
+
+  return { ...plan, collectionsChanged };
 }
 
 function markdownTableCell(value: string): string {
   return value.replace(/\s+/g, " ").trim().replaceAll("|", "\\|");
 }
 
-function relativeSkillPath(collection: SkillCollection, indexSkillPath: string, skill: SkillRecord): string {
+function relativeSkillPath(
+  collection: SkillCollection,
+  indexSkillPath: string,
+  skill: SkillRecord,
+): string {
   return path
     .relative(collectionDirectoryPath(indexSkillPath, collection.id), skill.skillFile)
     .split(path.sep)
@@ -323,7 +363,9 @@ export function generateCollectionSkill(
       return `| \`${markdownTableCell(skill.id)}\` | ${markdownTableCell(skill.description)} | \`${sourcePath}\` |`;
     });
   const tableRows =
-    rows.length > 0 ? rows.join("\n") : "| _No skills assigned_ | Assign managed skills to this collection. | _None_ |";
+    rows.length > 0
+      ? rows.join("\n")
+      : "| _No skills assigned_ | Assign managed skills to this collection. | _None_ |";
 
   return `---
 name: ${collection.id}
@@ -346,24 +388,37 @@ ${tableRows}
 }
 
 export function formatCollectionPlan(plan: CollectionPlan): string {
-  const lines = [`- Update collections.json with ${plan.finalCollections.length} collection(s).`];
+  const lines = [
+    plan.collectionsChanged
+      ? `- ${EMOJI.collection} Update collections.json with ${plan.finalCollections.length} collection(s).`
+      : `- ${EMOJI.collection} No update to collections.`,
+  ];
   for (const collection of plan.finalCollections) {
-    lines.push(`- Collection ${collection.title}: ${collection.skillIds.length} managed skill(s).`);
+    lines.push(
+      `- ${EMOJI.collection} Collection ${collection.title}: ${collection.skillIds.length} managed skill(s).`,
+    );
   }
   for (const id of plan.generatedCollectionIdsToRemove) {
-    lines.push(`- Remove generated collection: ${id}`);
+    lines.push(`- ${EMOJI.remove}  Remove generated collection: ${id}`);
   }
   return lines.join("\n");
 }
 
-export async function applyCollectionPlan(plan: CollectionPlan, finalManagedSkills: SkillRecord[]): Promise<void> {
+export async function applyCollectionPlan(
+  plan: CollectionPlan,
+  finalManagedSkills: SkillRecord[],
+): Promise<void> {
   await mkdir(plan.collectionsPath, { recursive: true });
 
   for (const collection of plan.finalCollections) {
     const directory = collectionDirectoryPath(plan.indexSkillPath, collection.id);
     await mkdir(directory, { recursive: true });
     const skillFile = collectionSkillFilePath(plan.indexSkillPath, collection.id);
-    await writeFile(skillFile, generateCollectionSkill(collection, finalManagedSkills, plan.indexSkillPath), "utf8");
+    await writeFile(
+      skillFile,
+      generateCollectionSkill(collection, finalManagedSkills, plan.indexSkillPath),
+      "utf8",
+    );
   }
 
   for (const collectionId of plan.generatedCollectionIdsToRemove) {

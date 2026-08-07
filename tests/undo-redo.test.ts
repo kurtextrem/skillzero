@@ -72,28 +72,35 @@ describe("skillzero undo and redo", () => {
         skillIds: ["ui-polish"],
       },
     ];
-    await applyMovePlan(
-      await buildMovePlan(configuredInventory, ["ui-polish"], collections),
-    );
+    await applyMovePlan(await buildMovePlan(configuredInventory, ["ui-polish"], collections));
 
     const undoResult = await captureRunFrom(rootPath, ["undo", "--yes"]);
 
     expect(undoResult.code).toBe(0);
     await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);
     await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(false);
-    await expect(exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"))).resolves.toBe(false);
-    await expect(exists(path.join(rootPath, "skill-index", "collections.json"))).resolves.toBe(false);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+    ).resolves.toBe(false);
+    await expect(exists(path.join(rootPath, "skill-index", "collections.json"))).resolves.toBe(
+      false,
+    );
     await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(true);
 
     const redoResult = await captureRunFrom(rootPath, ["redo", "--yes"]);
 
     expect(redoResult.code).toBe(0);
     await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"))).resolves.toBe(true);
-    await expect(readFile(path.join(rootPath, "skill-index", "SKILL.md"), "utf8")).resolves.toContain(
-      "collections/design/SKILL.md",
-    );
+    await expect(
+      exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md")),
+    ).resolves.toBe(true);
+    await expect(exists(path.join(rootPath, ".skillzero-known-skills.json"))).resolves.toBe(true);
+    await expect(
+      exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+    ).resolves.toBe(true);
+    await expect(
+      readFile(path.join(rootPath, "skill-index", "SKILL.md"), "utf8"),
+    ).resolves.toContain("collections/design/SKILL.md");
     await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(false);
   });
 
@@ -110,9 +117,9 @@ describe("skillzero undo and redo", () => {
     const undoResult = await captureRunFrom(rootPath, ["undo", "--yes"]);
 
     expect(undoResult.code).toBe(0);
-    await expect(readFile(path.join(rootPath, "ui-polish", "SKILL.md"), "utf8")).resolves.not.toContain(
-      "disable-model-invocation: true",
-    );
+    await expect(
+      readFile(path.join(rootPath, "ui-polish", "SKILL.md"), "utf8"),
+    ).resolves.not.toContain("disable-model-invocation: true");
     await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(false);
     await expect(exists(path.join(rootPath, ".skillzero-in-place.json"))).resolves.toBe(false);
 

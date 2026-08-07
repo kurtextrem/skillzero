@@ -64,11 +64,15 @@ function isWithin(parentPath: string, childPath: string): boolean {
   const relativePath = path.relative(parentPath, childPath);
   return (
     relativePath === "" ||
-    (relativePath !== ".." && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath))
+    (relativePath !== ".." &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
   );
 }
 
-async function discoverCandidateRoots(candidatePaths: readonly string[]): Promise<DiscoveredSkillsRoot[]> {
+async function discoverCandidateRoots(
+  candidatePaths: readonly string[],
+): Promise<DiscoveredSkillsRoot[]> {
   const rootsByRealPath = new Map<string, DiscoveredSkillsRoot>();
   for (const candidatePath of candidatePaths) {
     const candidateKind = await getPathKind(candidatePath);
@@ -112,7 +116,9 @@ export async function discoverSkillsRoots(
     throw new SkillzeroError(`Project path must be a directory: ${resolvedProjectPath}`);
   }
 
-  const candidatePaths = candidateSegments(target).map((segments) => path.join(resolvedProjectPath, ...segments));
+  const candidatePaths = candidateSegments(target).map((segments) =>
+    path.join(resolvedProjectPath, ...segments),
+  );
   return discoverCandidateRoots(candidatePaths);
 }
 
@@ -125,7 +131,10 @@ export async function discoverSkillsRootsAtPath(
   for (const ancestorPath of ancestorPaths(resolvedScopePath)) {
     for (const segments of candidateSegments(target)) {
       const candidatePath = path.join(ancestorPath, ...segments);
-      if (isWithin(candidatePath, resolvedScopePath) || path.dirname(candidatePath) === resolvedScopePath) {
+      if (
+        isWithin(candidatePath, resolvedScopePath) ||
+        path.dirname(candidatePath) === resolvedScopePath
+      ) {
         candidatePaths.push(candidatePath);
       }
     }
@@ -162,6 +171,8 @@ export async function discoverGlobalSkillsRoots(
   // Bare `skillzero` falls back to the conventional user-level roots after
   // checking the current project, which makes global sync repeatable without
   // storing machine-specific paths in the project.
-  const candidatePaths = candidateSegments(target).map((segments) => path.join(homedir(), ...segments));
+  const candidatePaths = candidateSegments(target).map((segments) =>
+    path.join(homedir(), ...segments),
+  );
   return discoverCandidateRoots(candidatePaths);
 }

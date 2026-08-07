@@ -20,7 +20,10 @@ function relativeSkillPath(indexSkillPath: string, skill: SkillRecord): string {
 
 function relativeCollectionPath(indexSkillPath: string, collection: SkillCollection): string {
   return path
-    .relative(indexSkillPath, path.join(indexSkillPath, COLLECTIONS_DIR_NAME, collection.id, SKILL_FILE_NAME))
+    .relative(
+      indexSkillPath,
+      path.join(indexSkillPath, COLLECTIONS_DIR_NAME, collection.id, SKILL_FILE_NAME),
+    )
     .split(path.sep)
     .join("/");
 }
@@ -49,7 +52,9 @@ export function generateIndexSkill(
       ? collectionRows.join("\n")
       : "| _No collections_ | Create a collection to group related managed skills. | _None_ |";
   const skillTableRows =
-    skillRows.length > 0 ? skillRows.join("\n") : "| _No uncollected skills_ | All managed skills are grouped above. | _None_ |";
+    skillRows.length > 0
+      ? skillRows.join("\n")
+      : "| _No uncollected skills_ | All managed skills are grouped above. | _None_ |";
 
   // This generated skill is intentionally small: it keeps only routing metadata
   // in context while the referenced skill stays unloaded until an agent needs it.

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { applyMoveOperations, applyMovePlan } from "./apply.js";
@@ -95,5 +95,5 @@ export async function applySync(plan: MovePlan, inventory: SkillInventory): Prom
 
   // A completed sync has materialized the selected set into the index, so the
   // handoff snapshot is no longer authoritative and must not affect later work.
-  await unlink(statePath(inventory));
+  await rm(statePath(inventory), { force: true });
 }

@@ -4,11 +4,12 @@ import path from "node:path";
 import matter from "gray-matter";
 
 import { DISABLE_MODEL_INVOCATION_FIELD, IN_PLACE_STATE_FILE_NAME } from "./constants.js";
+import { applyCollectionPlan, buildCollectionPlan, formatCollectionPlan } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 import { generateIndexSkill } from "./index-skill.js";
 
-import type { SkillInventory, SkillRecord } from "./types.js";
+import type { CollectionPlan, SkillInventory, SkillRecord } from "./types.js";
 
 type OriginalModelInvocation = boolean | null;
 type InPlaceStateOwner = "skillzero" | "external";
@@ -41,6 +42,7 @@ export interface InPlacePlan {
   finalManagedSkills: SkillRecord[];
   operations: InPlaceOperation[];
   nextState: InPlaceState | null;
+  collectionPlan: CollectionPlan;
 }
 
 function statePath(inventory: SkillInventory): string {
@@ -223,6 +225,7 @@ export async function buildInPlacePlan(
   inventory: SkillInventory,
   selectedIds: Iterable<string>,
   previousState: InPlaceState | null,
+  collections = inventory.collections,
 ): Promise<InPlacePlan> {
   if (inventory.managedSkills.length > 0) {
     throw new SkillzeroError(
@@ -311,12 +314,14 @@ export async function buildInPlacePlan(
   }
 
   finalManagedSkills.sort((left, right) => left.id.localeCompare(right.id));
+  const collectionPlan = await buildCollectionPlan(inventory, finalManagedSkills, collections);
   return {
     indexSkillPath: inventory.indexSkillPath,
     indexSkillFile: inventory.indexSkillFile,
     finalManagedSkills,
     operations,
     nextState: sortedState(nextSkills),
+    collectionPlan,
   };
 }
 
@@ -332,6 +337,7 @@ export function formatInPlacePlan(plan: InPlacePlan): string {
   }
 
   lines.push(`- Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`);
+  lines.push(formatCollectionPlan(plan.collectionPlan));
   return lines.join("\n");
 }
 
@@ -350,7 +356,12 @@ export async function applyInPlacePlan(plan: InPlacePlan, inventory: SkillInvent
   }
 
   await mkdir(plan.indexSkillPath, { recursive: true });
-  await writeFile(plan.indexSkillFile, generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath), "utf8");
+  await applyCollectionPlan(plan.collectionPlan, plan.finalManagedSkills);
+  await writeFile(
+    plan.indexSkillFile,
+    generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath, plan.collectionPlan.finalCollections),
+    "utf8",
+  );
 
   const filePath = statePath(inventory);
   if (plan.nextState === null) {

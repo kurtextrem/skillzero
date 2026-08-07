@@ -45,6 +45,7 @@ function firstUsefulBodyLine(content: string): string | null {
 export interface ParsedSkillMetadata {
   title: string;
   description: string;
+  disableModelInvocation: boolean;
 }
 
 export function parseSkillMetadata(content: string, fallbackId: string): ParsedSkillMetadata {
@@ -58,7 +59,11 @@ export function parseSkillMetadata(content: string, fallbackId: string): ParsedS
     firstUsefulBodyLine(parsed.content) ??
     "No description provided.";
 
-  return { title, description };
+  return {
+    title,
+    description,
+    disableModelInvocation: isRecord(parsed.data) && parsed.data["disable-model-invocation"] === true,
+  };
 }
 
 export async function readSkillRecord(
@@ -73,6 +78,7 @@ export async function readSkillRecord(
     id,
     title: metadata.title,
     description: metadata.description,
+    disableModelInvocation: metadata.disableModelInvocation,
     directory,
     skillFile,
     origin,

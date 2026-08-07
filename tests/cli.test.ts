@@ -46,122 +46,53 @@ async function captureRun(args: string[]): Promise<CapturedRun> {
   }
 }
 
+async function captureRunFrom(cwd: string, args: string[]): Promise<CapturedRun> {
+  const originalCwd = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await captureRun(args);
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
 describe("runCli", () => {
-  it("prints a scan summary", async () => {
-    const rootPath = await createTempRoot();
-    await writeSkill(rootPath, "api-builder", "---\ndescription: Build APIs.\n---\n");
-
-    const result = await captureRun(["scan", "--path", rootPath]);
+  it("returns cleanly for root help without entering the default flow", async () => {
+    const result = await captureRun(["--help"]);
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("Active skills (1)");
-    expect(result.stdout).toContain("api-builder — Build APIs.");
+    expect(result.stderr).toBe("");
   });
 
-  it("finds skills that are installed in different project harness roots", async () => {
-    const projectPath = await createTempRoot();
-    const agentsRoot = path.join(projectPath, ".agents", "skills");
-    const codexRoot = path.join(projectPath, ".codex", "skills");
-    const geminiRoot = path.join(projectPath, ".gemini", "skills");
-    await writeSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
-    await writeSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
-    await writeSkill(geminiRoot, "gemini-only", "---\ndescription: Gemini-only skill.\n---\n");
-
-    const result = await captureRun(["scan", "--project", projectPath]);
-
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain(agentsRoot);
-    expect(result.stdout).toContain(codexRoot);
-    expect(result.stdout).toContain(geminiRoot);
-    expect(result.stdout).toContain("shared-skill — Shared skill.");
-    expect(result.stdout).toContain("codex-only — Codex-only skill.");
-    expect(result.stdout).toContain("gemini-only — Gemini-only skill.");
-  });
-
-  it("previews a skills-management handoff without prompting", async () => {
+  it("previews an empty positional skills root without prompting", async () => {
     const rootPath = await createTempRoot();
 
-    const result = await captureRun(["manage", "--path", rootPath, "--dry-run"]);
+    const result = await captureRun([rootPath, "--dry-run"]);
 
     expect(result.code).toBe(0);
-  });
-
-  it.each(["--codex", "--copilot", "--gemini"])("releases managed skills with %s", async (target) => {
-    const rootPath = await createTempRoot();
-    await writeManagedSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
-
-    const result = await captureRun(["manage", "--path", rootPath, target, "--yes"]);
-
-    expect(result.code).toBe(0);
-    await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(false);
-  });
-
-  it.each(["--claude", "--cursor"])("leaves ordinary skill folders available to the skills CLI with %s", async (target) => {
-    const rootPath = await createTempRoot();
-    await writeSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
-
-    const result = await captureRun(["manage", "--path", rootPath, target, "--yes"]);
-
-    expect(result.code).toBe(0);
-    await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "skill-index", ".skillzero-handoff.json"))).resolves.toBe(false);
   });
 
   it("rejects selecting more than one harness target", async () => {
     const rootPath = await createTempRoot();
 
-    const result = await captureRun(["manage", "--path", rootPath, "--claude", "--codex"]);
+    const result = await captureRun([rootPath, "--claude", "--codex"]);
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Choose exactly one target");
   });
 
-  it("releases moved skills from every discovered Codex root", async () => {
+  it("syncs moved skills from every discovered Codex root", async () => {
     const projectPath = await createTempRoot();
     const agentsRoot = path.join(projectPath, ".agents", "skills");
     const codexRoot = path.join(projectPath, ".codex", "skills");
     await writeManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
     await writeManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
 
-    const result = await captureRun(["manage", "--project", projectPath, "--codex", "--yes"]);
+    const result = await captureRun([projectPath, "--codex", "--yes"]);
 
     expect(result.code).toBe(0);
-    await expect(exists(path.join(agentsRoot, "shared-skill", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(codexRoot, "codex-only", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(agentsRoot, "skill-index", "SKILL.md"))).resolves.toBe(false);
-    await expect(exists(path.join(codexRoot, "skill-index", "SKILL.md"))).resolves.toBe(false);
-  });
-
-  it("syncs every released Codex root", async () => {
-    const projectPath = await createTempRoot();
-    const agentsRoot = path.join(projectPath, ".agents", "skills");
-    const codexRoot = path.join(projectPath, ".codex", "skills");
-    await writeManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
-    await writeManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
-
-    await captureRun(["manage", "--project", projectPath, "--codex", "--yes"]);
-    const result = await captureRun(["sync", "--project", projectPath, "--codex", "--yes"]);
-
-    expect(result.code).toBe(0);
-    await expect(exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "SKILL.md"))).resolves.toBe(true);
-  });
-
-  it("releases skills from every discovered Gemini root", async () => {
-    const projectPath = await createTempRoot();
-    const agentsRoot = path.join(projectPath, ".agents", "skills");
-    const geminiRoot = path.join(projectPath, ".gemini", "skills");
-    await writeManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
-    await writeManagedSkill(geminiRoot, "gemini-only", "---\ndescription: Gemini-only skill.\n---\n");
-
-    const result = await captureRun(["manage", "--project", projectPath, "--gemini", "--yes"]);
-
-    expect(result.code).toBe(0);
-    await expect(exists(path.join(agentsRoot, "shared-skill", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(geminiRoot, "gemini-only", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(agentsRoot, "skill-index", "SKILL.md"))).resolves.toBe(false);
-    await expect(exists(path.join(geminiRoot, "skill-index", "SKILL.md"))).resolves.toBe(false);
+    await expect(exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md"))).resolves.toBe(true);
+    await expect(exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md"))).resolves.toBe(true);
   });
 
   it("refuses to mutate one SKILL.md linked into separate discovered roots", async () => {
@@ -178,30 +109,38 @@ describe("runCli", () => {
     await symlink(sourceSkillPath, path.join(agentsRoot, "linked-skill"), "dir");
     await symlink(sourceSkillPath, path.join(codexRoot, "linked-skill"), "dir");
 
-    const result = await captureRun(["manage", "--project", projectPath, "--codex", "--yes"]);
+    const result = await captureRun([projectPath, "--codex", "--yes"]);
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("same SKILL.md is linked into multiple roots");
   });
 
-  it("keeps skills added during the handoff visible when sync runs non-interactively", async () => {
+
+  it("syncs an existing positional skills root without a handoff file", async () => {
     const rootPath = await createTempRoot();
     await writeManagedSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
 
-    await captureRun(["manage", "--path", rootPath, "--yes"]);
-    await writeSkill(rootPath, "new-skill", "---\ndescription: Added by skills update.\n---\n");
-
-    const result = await captureRun(["sync", "--path", rootPath, "--yes"]);
+    const result = await captureRun([rootPath, "--yes"]);
 
     expect(result.code).toBe(0);
-    await expect(exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "SKILL.md"))).resolves.toBe(true);
-    await expect(exists(path.join(rootPath, "new-skill", "SKILL.md"))).resolves.toBe(true);
+    await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
+    await expect(exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md"))).resolves.toBe(true);
+  });
+
+  it("runs collections as an explicit command", async () => {
+    const rootPath = await createTempRoot();
+    await mkdir(path.join(rootPath, "skill-index"), { recursive: true });
+
+    const result = await captureRunFrom(rootPath, ["collections", "--dry-run"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("No non-top-level skills or collections found");
   });
 
   it("reports missing paths", async () => {
-    const result = await captureRun(["scan", "--path", "/definitely/not/a/skills/path"]);
+    const result = await captureRun(["/definitely/not/a/skills/path"]);
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("Skills path does not exist");
+    expect(result.stderr).toContain("Scope path does not exist");
   });
 });

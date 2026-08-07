@@ -2,7 +2,7 @@ import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { discoverSkillsRoots } from "../src/discovery.js";
+import { discoverSkillsRoots, discoverSkillsRootsAtPath } from "../src/discovery.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeManagedSkill, writeSkill } from "./helpers.js";
 
@@ -90,6 +90,20 @@ description: Improve UI quality.
         path: agentsRoot,
         realPath: await realpath(agentsRoot),
         aliases: [agentsRoot, codexRoot],
+      },
+    ]);
+  });
+
+  it("finds the direct skills root when scoped from its harness directory", async () => {
+    const projectPath = await createTempRoot();
+    const agentsRoot = path.join(projectPath, ".agents", "skills");
+    await writeSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
+
+    await expect(discoverSkillsRootsAtPath(path.join(projectPath, ".agents"), null)).resolves.toEqual([
+      {
+        path: agentsRoot,
+        realPath: await realpath(agentsRoot),
+        aliases: [agentsRoot],
       },
     ]);
   });

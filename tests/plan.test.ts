@@ -1,7 +1,8 @@
-import { mkdir } from "node:fs/promises";
+import { access, constants, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { applyMovePlan } from "../src/apply.js";
 import { buildMovePlan } from "../src/plan.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeManagedSkill, writeSkill } from "./helpers.js";
@@ -18,7 +19,7 @@ describe("buildMovePlan", () => {
     expect(plan.operations[0]?.kind).toBe("move-to-index");
     expect(plan.finalManagedSkills.map((skill) => skill.id)).toEqual(["api-builder"]);
     expect(plan.finalManagedSkills[0]?.skillFile).toBe(
-      path.join(rootPath, "skill-index", "skills", "api-builder", "SKILL.md"),
+      path.join(rootPath, "skill-index", "skills", "api-builder", "_SKILL.md"),
     );
   });
 
@@ -64,5 +65,38 @@ describe("buildMovePlan", () => {
     const inventory = await scanSkills(rootPath);
 
     await expect(buildMovePlan(inventory, [])).rejects.toThrow("Move destination already exists");
+  });
+
+  it("always hides moved skills even when they disable model invocation", async () => {
+    const rootPath = await createTempRoot();
+    await writeSkill(
+      rootPath,
+      "manual-only",
+      "---\ndescription: Manual-only skill.\ndisable-model-invocation: true\n---\n",
+    );
+
+    const inventory = await scanSkills(rootPath);
+    const plan = await buildMovePlan(inventory, ["manual-only"]);
+
+    expect(plan.operations[0]?.kind).toBe("move-to-index");
+    expect(plan.finalManagedSkills[0]?.skillFile).toBe(
+      path.join(rootPath, "skill-index", "skills", "manual-only", "_SKILL.md"),
+    );
+    await applyMovePlan(plan);
+
+    await expect(
+      access(path.join(rootPath, "skill-index", "skills", "manual-only", "SKILL.md"), constants.F_OK),
+    ).rejects.toThrow();
+    await expect(
+      access(path.join(rootPath, "skill-index", "skills", "manual-only", "_SKILL.md"), constants.F_OK),
+    ).resolves.toBeUndefined();
+    await expect(scanSkills(rootPath)).resolves.toMatchObject({
+      managedSkills: [
+        {
+          id: "manual-only",
+          skillFile: path.join(rootPath, "skill-index", "skills", "manual-only", "_SKILL.md"),
+        },
+      ],
+    });
   });
 });

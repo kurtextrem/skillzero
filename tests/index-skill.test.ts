@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { generateIndexSkill } from "../src/index-skill.js";
 
-import type { SkillRecord } from "../src/types.js";
+import type { SkillCollection, SkillRecord } from "../src/types.js";
 
 function managedSkill(rootPath: string, id: string, description: string): SkillRecord {
   const directory = path.join(rootPath, "skill-index", "skills", id);
@@ -11,8 +11,9 @@ function managedSkill(rootPath: string, id: string, description: string): SkillR
     id,
     title: id,
     description,
+    disableModelInvocation: false,
     directory,
-    skillFile: path.join(directory, "SKILL.md"),
+    skillFile: path.join(directory, "_SKILL.md"),
     origin: "managed",
   };
 }
@@ -32,7 +33,7 @@ describe("generateIndexSkill", () => {
     expect(content).toMatchInlineSnapshot(`
       "---
       name: skill-index
-      description: "Use this skill when a user asks about available skills, wants to use a skill, wants to manage skills, or when a task likely benefits from specialized skill instructions hidden behind this index."
+      description: "Use this skill when a user asks about available skills, wants to manage skills or wants to use a skill you don't know."
       ---
 
       # Skill Index
@@ -41,15 +42,44 @@ describe("generateIndexSkill", () => {
 
       Use this skill to decide whether a specialized managed skill should be loaded for the user's request.
 
-      Before applying any managed skill, read the full \`SKILL.md\` file listed in the table. Do not rely on this index alone when executing a task.
+      When a collection matches the user's request, read its full \`SKILL.md\` file. The collection is a routing manifest containing the descriptions and source paths for its managed skills. Read the full source \`SKILL.md\` for each relevant skill before applying it.
 
-      ## Managed Skills
+      ## Collections
+
+      | Collection | Description | Path |
+      | --- | --- | --- |
+      | _No collections_ | Create a collection to group related managed skills. | _None_ |
+
+      ## Uncollected Managed Skills
 
       | Skill | Description | Path |
       | --- | --- | --- |
-      | \`api-builder\` | Build \\| review API contracts. | \`skills/api-builder/SKILL.md\` |
-      | \`ui-polish\` | Improve UI quality. | \`skills/ui-polish/SKILL.md\` |
+      | \`api-builder\` | Build \\| review API contracts. | \`skills/api-builder/_SKILL.md\` |
+      | \`ui-polish\` | Improve UI quality. | \`skills/ui-polish/_SKILL.md\` |
       "
     `);
+  });
+
+  it("routes categorized skills through collection manifests", () => {
+    const rootPath = "/tmp/project/.codex/skills";
+    const indexPath = path.join(rootPath, "skill-index");
+    const collection: SkillCollection = {
+      id: "design",
+      title: "Design",
+      description: "Read for tasks related to design.",
+      skillIds: ["ui-polish"],
+    };
+    const content = generateIndexSkill(
+      [
+        managedSkill(rootPath, "api-builder", "Build APIs."),
+        managedSkill(rootPath, "ui-polish", "Improve UI quality."),
+      ],
+      indexPath,
+      [collection],
+    );
+
+    expect(content).toContain("| Design | Read for tasks related to design. | `collections/design/SKILL.md` |");
+    expect(content).toContain("| `api-builder` | Build APIs. | `skills/api-builder/_SKILL.md` |");
+    expect(content).not.toContain("| `ui-polish` | Improve UI quality.");
   });
 });

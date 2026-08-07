@@ -1,6 +1,7 @@
 import path from "node:path";
 
-import { SKILL_FILE_NAME } from "./constants.js";
+import { buildCollectionPlan, formatCollectionPlan } from "./collections.js";
+import { MANAGED_SKILL_FILE_NAME, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 
@@ -24,8 +25,11 @@ function moveToManagedRecord(skill: SkillRecord, inventory: SkillInventory): Ski
     id: skill.id,
     title: skill.title,
     description: skill.description,
+    disableModelInvocation: skill.disableModelInvocation,
     directory,
-    skillFile: path.join(directory, SKILL_FILE_NAME),
+    // Moved mode hides the file from skill discovery regardless of frontmatter.
+    // Only the in-place Claude/Cursor strategy leaves SKILL.md discoverable.
+    skillFile: path.join(directory, MANAGED_SKILL_FILE_NAME),
     origin: "managed",
   };
 }
@@ -35,6 +39,16 @@ async function validateOperationPaths(operations: MoveOperation[]): Promise<void
     const sourceKind = await getPathKind(operation.from);
     if (sourceKind !== "directory") {
       throw new SkillzeroError(`Move source is missing or invalid: ${operation.from}`);
+    }
+
+    const sourceSkillFileKind = await getPathKind(operation.fromSkillFile);
+    if (sourceSkillFileKind !== "file") {
+      throw new SkillzeroError(`Move source skill file is missing or invalid: ${operation.fromSkillFile}`);
+    }
+
+    const targetSkillFileKind = await getPathKind(operation.toSkillFile);
+    if (targetSkillFileKind !== "missing") {
+      throw new SkillzeroError(`Move destination skill file already exists: ${operation.toSkillFile}`);
     }
 
     const destinationKind = await getPathKind(operation.to);
@@ -47,6 +61,7 @@ async function validateOperationPaths(operations: MoveOperation[]): Promise<void
 export async function buildMovePlan(
   inventory: SkillInventory,
   selectedIds: Iterable<string>,
+  collections = inventory.collections,
 ): Promise<MovePlan> {
   if (inventory.indexFileExists && !inventory.indexFileGenerated) {
     throw new SkillzeroError(`Refusing to overwrite non-generated index skill: ${inventory.indexSkillFile}`);
@@ -83,6 +98,8 @@ export async function buildMovePlan(
       kind: "move-to-index",
       from: skill.directory,
       to: managedSkill.directory,
+      fromSkillFile: skill.skillFile,
+      toSkillFile: managedSkill.skillFile,
       skill,
     });
     finalManagedSkills.push(managedSkill);
@@ -90,7 +107,8 @@ export async function buildMovePlan(
 
   for (const skill of inventory.managedSkills) {
     if (selectedIdSet.has(skill.id)) {
-      finalManagedSkills.push(skill);
+      const managedSkill = moveToManagedRecord(skill, inventory);
+      finalManagedSkills.push(managedSkill);
       continue;
     }
 
@@ -99,6 +117,8 @@ export async function buildMovePlan(
       kind: "restore-to-root",
       from: skill.directory,
       to: path.join(inventory.rootPath, skill.id),
+      fromSkillFile: skill.skillFile,
+      toSkillFile: path.join(inventory.rootPath, skill.id, SKILL_FILE_NAME),
       skill,
     });
   }
@@ -106,6 +126,7 @@ export async function buildMovePlan(
   await validateOperationPaths(operations);
 
   finalManagedSkills.sort((left, right) => left.id.localeCompare(right.id));
+  const collectionPlan = await buildCollectionPlan(inventory, finalManagedSkills, collections);
 
   return {
     rootPath: inventory.rootPath,
@@ -114,6 +135,7 @@ export async function buildMovePlan(
     managedSkillsPath: inventory.managedSkillsPath,
     operations,
     finalManagedSkills,
+    collectionPlan,
   };
 }
 
@@ -130,5 +152,6 @@ export function formatMovePlan(plan: MovePlan): string {
   }
 
   lines.push(`- Update skill-index/SKILL.md with ${plan.finalManagedSkills.length} managed skill(s).`);
+  lines.push(formatCollectionPlan(plan.collectionPlan));
   return lines.join("\n");
 }

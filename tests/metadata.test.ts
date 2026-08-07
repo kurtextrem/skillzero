@@ -18,6 +18,7 @@ description: Build and review API contracts.
     expect(metadata).toEqual({
       title: "API Builder",
       description: "Build and review API contracts.",
+      disableModelInvocation: false,
     });
   });
 
@@ -33,6 +34,7 @@ Use this skill for focused test placement.
     expect(metadata).toEqual({
       title: "Test Placement",
       description: "Use this skill for focused test placement.",
+      disableModelInvocation: false,
     });
   });
 });

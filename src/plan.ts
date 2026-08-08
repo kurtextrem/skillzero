@@ -1,5 +1,4 @@
 import path from "node:path";
-
 import { buildCollectionPlan, formatCollectionPlan } from "./collections.js";
 import { MANAGED_SKILL_FILE_NAME, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
@@ -7,7 +6,6 @@ import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
 import { generateIndexSkill } from "./index-skill.js";
 import { estimateSavedTokens } from "./tokens.js";
 import { EMOJI } from "./ui.js";
-
 import type { MoveOperation, MovePlan, SkillInventory, SkillRecord } from "./types.js";
 
 function mapById(skills: SkillRecord[]): Map<string, SkillRecord> {
@@ -140,11 +138,7 @@ export async function buildMovePlan(
 
 	finalManagedSkills.sort((left, right) => left.id.localeCompare(right.id));
 	const collectionPlan = await buildCollectionPlan(inventory, finalManagedSkills, collections);
-	const indexContent = generateIndexSkill(
-		finalManagedSkills,
-		inventory.indexSkillPath,
-		collectionPlan.finalCollections,
-	);
+	const indexContent = generateIndexSkill(finalManagedSkills, inventory.indexSkillPath);
 
 	return {
 		rootPath: inventory.rootPath,

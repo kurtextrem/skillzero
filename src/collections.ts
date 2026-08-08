@@ -370,16 +370,12 @@ export function generateCollectionSkill(
 	return `---
 name: ${collection.id}
 description: ${JSON.stringify(collection.description)}
-disable-model-invocation: true
 ---
-
 # ${collection.title}
 
 ${GENERATED_MARKER}
 
-When a request matches this collection, read the source \`SKILL.md\` for relevant skill(s) below. Source paths are relative to this collection file. This file describes where the skills are; it is not a replacement for their instructions.
-
-## Skills
+When a user request matches any of the skill(s), read the source.
 
 | Skill | Description | Source |
 | --- | --- | --- |

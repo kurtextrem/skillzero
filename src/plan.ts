@@ -5,6 +5,7 @@ import { MANAGED_SKILL_FILE_NAME, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
 import { generateIndexSkill } from "./index-skill.js";
+import { estimateSavedTokens } from "./tokens.js";
 import { EMOJI } from "./ui.js";
 
 import type { MoveOperation, MovePlan, SkillInventory, SkillRecord } from "./types.js";
@@ -176,5 +177,8 @@ export function formatMovePlan(plan: MovePlan): string {
       : `- ${EMOJI.index} No update to ${plan.finalManagedSkills.length} managed skill(s).`,
   );
   lines.push(formatCollectionPlan(plan.collectionPlan));
+  lines.push(
+    `- ${EMOJI.new} Skillzero now saves ${estimateSavedTokens(plan.finalManagedSkills)} tokens for you.`,
+  );
   return lines.join("\n");
 }

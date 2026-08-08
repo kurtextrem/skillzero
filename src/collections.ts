@@ -377,7 +377,7 @@ disable-model-invocation: true
 
 ${GENERATED_MARKER}
 
-This collection is a routing manifest. When a request matches this collection, read the source \`SKILL.md\` for each relevant skill below before applying it. Source paths are relative to this collection file. This file describes where the skills are; it is not a replacement for their instructions.
+When a request matches this collection, read the source \`SKILL.md\` for relevant skill(s) below. Source paths are relative to this collection file. This file describes where the skills are; it is not a replacement for their instructions.
 
 ## Skills
 

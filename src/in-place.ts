@@ -8,6 +8,7 @@ import { applyCollectionPlan, buildCollectionPlan, formatCollectionPlan } from "
 import { SkillzeroError } from "./errors.js";
 import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
 import { generateIndexSkill } from "./index-skill.js";
+import { estimateSavedTokens } from "./tokens.js";
 import { EMOJI } from "./ui.js";
 
 import type { CollectionPlan, SkillInventory, SkillRecord } from "./types.js";
@@ -368,6 +369,9 @@ export function formatInPlacePlan(plan: InPlacePlan): string {
       : `- ${EMOJI.index} No update to ${plan.finalManagedSkills.length} managed skill(s).`,
   );
   lines.push(formatCollectionPlan(plan.collectionPlan));
+  lines.push(
+    `- ${EMOJI.new} Skillzero now saves ${estimateSavedTokens(plan.finalManagedSkills)} tokens for you.`,
+  );
   return lines.join("\n");
 }
 

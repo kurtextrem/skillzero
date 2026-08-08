@@ -1,19 +1,29 @@
 import * as p from "@clack/prompts";
 import cac from "cac";
 import { spawnSync } from "node:child_process";
-import { readdir, realpath } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import { applyMovePlan } from "./apply.js";
 import { collectionIdFromTitle } from "./collections.js";
-import { CLI_NAME, CLI_VERSION, REDO_STATE_FILE_NAME, SKILL_FILE_NAME } from "./constants.js";
+import {
+  CLI_NAME,
+  CLI_VERSION,
+  GENERATED_MARKER,
+  HANDOFF_STATE_FILE_NAME,
+  IN_PLACE_STATE_FILE_NAME,
+  KNOWN_SKILLS_STATE_FILE_NAME,
+  REDO_STATE_FILE_NAME,
+  SKILL_FILE_NAME,
+} from "./constants.js";
 import {
   discoverGlobalSkillsRoots,
   discoverProjectSkillsRootsAtPath,
   discoverSkillsRootsAtPath,
 } from "./discovery.js";
 import { SkillzeroError } from "./errors.js";
-import { clearRedoState } from "./history.js";
+import { clearRedoState, readRedoState } from "./history.js";
 import { applyHandoff, applySync, clearHandoffState, readHandoffState } from "./handoff.js";
 import {
   applyInPlacePlan,
@@ -26,6 +36,7 @@ import { buildMovePlan, formatMovePlan } from "./plan.js";
 import { scanSkills } from "./scanner.js";
 import { getPathKind } from "./fs-utils.js";
 import { promptVisibleMultiselect } from "./multiselect.js";
+import { estimateSavedTokens } from "./tokens.js";
 import {
   applyRedoPlan,
   applyUndoPlan,
@@ -60,6 +71,12 @@ type PromptRootsResult =
       discoveredRoots: DiscoveredSkillsRoot[];
     }
   | { status: "cancelled" };
+
+interface RootCandidate {
+  root: DiscoveredSkillsRoot;
+  location: "project" | "global";
+  managed: boolean;
+}
 
 type InventoryResolutionResult =
   | {
@@ -201,6 +218,297 @@ function rootsResult(roots: DiscoveredSkillsRoot[], projectPath: string | null):
   };
 }
 
+function mergeRootCandidates(
+  candidates: Map<string, RootCandidate>,
+  roots: DiscoveredSkillsRoot[],
+  location: RootCandidate["location"],
+): void {
+  for (const root of roots) {
+    const existing = candidates.get(root.realPath);
+    if (existing) {
+      existing.root.aliases = [...new Set([...existing.root.aliases, ...root.aliases])];
+      if (location === "project") {
+        existing.location = location;
+      }
+      continue;
+    }
+
+    candidates.set(root.realPath, {
+      root: { ...root, aliases: [...root.aliases] },
+      location,
+      managed: false,
+    });
+  }
+}
+
+async function isSkillzeroManagedRoot(rootPath: string): Promise<boolean> {
+  // State artifacts still identify a managed root while an update handoff has
+  // temporarily removed the generated index file.
+  const generatedIndexFile = path.join(rootPath, "skill-index", SKILL_FILE_NAME);
+  if ((await getPathKind(generatedIndexFile)) === "file") {
+    if ((await readFile(generatedIndexFile, "utf8")).includes(GENERATED_MARKER)) {
+      return true;
+    }
+  }
+
+  const stateFiles = [
+    path.join(rootPath, IN_PLACE_STATE_FILE_NAME),
+    path.join(rootPath, KNOWN_SKILLS_STATE_FILE_NAME),
+    path.join(rootPath, REDO_STATE_FILE_NAME),
+    path.join(rootPath, "skill-index", HANDOFF_STATE_FILE_NAME),
+  ];
+  for (const stateFile of stateFiles) {
+    if ((await getPathKind(stateFile)) === "file") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function rootHasSkills(rootPath: string): Promise<boolean> {
+  const inventory = await scanSkills(rootPath);
+  return inventory.activeSkills.length > 0 || inventory.managedSkills.length > 0;
+}
+
+function displayRootPath(candidate: RootCandidate): string {
+  if (candidate.location === "global") {
+    const homeRelative = path.relative(homedir(), candidate.root.path);
+    if (homeRelative === "") {
+      return "~";
+    }
+    if (
+      homeRelative !== ".." &&
+      !homeRelative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(homeRelative)
+    ) {
+      return `~/${homeRelative}`;
+    }
+  }
+
+  const currentRelative = path.relative(process.cwd(), candidate.root.path);
+  if (currentRelative === "") {
+    return ".";
+  }
+  if (currentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(currentRelative)) {
+    return candidate.root.path;
+  }
+  return `./${currentRelative}`;
+}
+
+async function rootSavings(inventory: SkillInventory): Promise<number> {
+  if (inventory.managedSkills.length > 0) {
+    return estimateSavedTokens(inventory.managedSkills);
+  }
+
+  const activeById = new Map(inventory.activeSkills.map((skill) => [skill.id, skill]));
+  const inPlaceState = await readInPlaceState(inventory);
+  if (inPlaceState !== null) {
+    return estimateSavedTokens(
+      inPlaceState.skills.flatMap((state) => {
+        const skill = activeById.get(state.id);
+        return skill ? [skill] : [];
+      }),
+    );
+  }
+
+  const handoffState = await readHandoffState(inventory);
+  if (handoffState !== null) {
+    return estimateSavedTokens(
+      handoffState.managedIds.flatMap((id) => {
+        const skill = activeById.get(id);
+        return skill ? [skill] : [];
+      }),
+    );
+  }
+
+  const redoState = await readRedoState(inventory.rootPath);
+  if (redoState !== null) {
+    return estimateSavedTokens(
+      redoState.managedIds.flatMap((id) => {
+        const skill = activeById.get(id);
+        return skill ? [skill] : [];
+      }),
+    );
+  }
+
+  return 0;
+}
+
+async function rootCandidateSummary(candidates: RootCandidate[]): Promise<string> {
+  const managed = candidates.filter((candidate) => candidate.managed);
+  const available = candidates.filter((candidate) => !candidate.managed);
+  const lines = [`${EMOJI.managed} Managed by skillzero`];
+
+  if (managed.length === 0) {
+    lines.push(`  ${dim("None found")}`);
+  } else {
+    const managedPaths = await Promise.all(
+      managed.map(async (candidate) => {
+        const inventory = await scanSkills(candidate.root.realPath);
+        const savings = await rootSavings(inventory);
+        return `  ${displayRootPath(candidate)} ${dim(`(saves: ${savings} tokens)`)}`;
+      }),
+    );
+    lines.push(...managedPaths);
+  }
+
+  lines.push("", `${EMOJI.info} Available skill paths`);
+  if (available.length === 0) {
+    lines.push(`  ${dim("None found")}`);
+  } else {
+    lines.push(...available.map((candidate) => `  ${displayRootPath(candidate)}`));
+  }
+
+  return lines.join("\n");
+}
+
+async function discoverNoPathCandidates(
+  options: CliOptions,
+): Promise<{ candidates: RootCandidate[]; projectPath: string | null }> {
+  // Bare invocation needs a complete candidate list before scanning or writing
+  // so users can review managed roots and opt into other existing roots.
+  const candidates = new Map<string, RootCandidate>();
+  let projectPath: string | null = null;
+
+  if (await isLikelySkillsRoot(process.cwd())) {
+    const currentPath = path.resolve(process.cwd());
+    const currentRealPath = await realpath(currentPath);
+    mergeRootCandidates(
+      candidates,
+      [
+        {
+          path: currentPath,
+          realPath: currentRealPath,
+          aliases: [currentPath],
+        },
+      ],
+      "project",
+    );
+  }
+
+  mergeRootCandidates(
+    candidates,
+    await discoverSkillsRootsAtPath(process.cwd(), options.target),
+    "project",
+  );
+
+  const projectRoots = await discoverProjectSkillsRootsAtPath(process.cwd(), options.target);
+  if (projectRoots !== null) {
+    projectPath = projectRoots.projectPath;
+    mergeRootCandidates(candidates, projectRoots.roots, "project");
+  }
+
+  mergeRootCandidates(candidates, await discoverGlobalSkillsRoots(options.target), "global");
+
+  const sortedCandidates = [...candidates.values()];
+  for (const candidate of sortedCandidates) {
+    candidate.managed = await isSkillzeroManagedRoot(candidate.root.realPath);
+  }
+  const nonEmptyCandidates: RootCandidate[] = [];
+  for (const candidate of sortedCandidates) {
+    // A conventional directory is only useful in the selector if it contains
+    // at least one active or nested managed skill.
+    if (await rootHasSkills(candidate.root.realPath)) {
+      nonEmptyCandidates.push(candidate);
+    }
+  }
+  nonEmptyCandidates.sort((left, right) => {
+    if (left.managed !== right.managed) {
+      return left.managed ? -1 : 1;
+    }
+    if (left.location !== right.location) {
+      return left.location === "project" ? -1 : 1;
+    }
+    return displayRootPath(left).localeCompare(displayRootPath(right));
+  });
+
+  return { candidates: nonEmptyCandidates, projectPath };
+}
+
+async function promptForRootCandidates(
+  candidates: RootCandidate[],
+  projectPath: string | null,
+): Promise<PromptRootsResult> {
+  if (!process.stdin.isTTY) {
+    // CI and update wrappers cannot choose interactively; keep project roots
+    // isolated from global roots unless no project roots were discovered.
+    const projectCandidates = candidates.filter((candidate) => candidate.location === "project");
+    const selectedCandidates = projectCandidates.length > 0 ? projectCandidates : candidates;
+    return rootsResult(
+      selectedCandidates.map((candidate) => candidate.root),
+      projectPath,
+    );
+  }
+
+  if (candidates.length === 0) {
+    p.note(
+      `${EMOJI.info} No conventional skills paths were found.`,
+      `${EMOJI.folder} Skills paths`,
+    );
+    let selectedPath: string | symbol;
+    while (true) {
+      selectedPath = await p.path({
+        message: "Select a non-empty skills directory to manage",
+        directory: true,
+      });
+
+      if (p.isCancel(selectedPath)) {
+        return { status: "cancelled" };
+      }
+
+      try {
+        if (await rootHasSkills(selectedPath)) {
+          break;
+        }
+        p.note("The directory must contain at least one skill.", `${EMOJI.info} Skills paths`);
+      } catch (error) {
+        p.note(
+          error instanceof Error ? error.message : "Select a readable skills directory.",
+          `${EMOJI.info} Skills paths`,
+        );
+      }
+    }
+
+    return rootsResult(
+      [
+        {
+          path: selectedPath,
+          realPath: path.resolve(selectedPath),
+          aliases: [selectedPath],
+        },
+      ],
+      null,
+    );
+  }
+
+  p.note(await rootCandidateSummary(candidates), `${EMOJI.folder} Skills paths`);
+  const selectedPaths = await p.multiselect<string>({
+    message: `${EMOJI.folder} Choose skills paths to manage`,
+    options: candidates.map((candidate) => ({
+      value: candidate.root.path,
+      label: displayRootPath(candidate),
+      hint: candidate.managed ? "managed by skillzero" : "available to manage",
+    })),
+    initialValues: candidates
+      .filter((candidate) => candidate.managed)
+      .map((candidate) => candidate.root.path),
+    required: false,
+  });
+
+  if (p.isCancel(selectedPaths)) {
+    return { status: "cancelled" };
+  }
+
+  const selected = new Set(selectedPaths);
+  return rootsResult(
+    candidates
+      .filter((candidate) => selected.has(candidate.root.path))
+      .map((candidate) => candidate.root),
+    projectPath,
+  );
+}
+
 async function resolveExplicitScope(
   scope: string,
   target: InvocationTarget | null,
@@ -248,8 +556,11 @@ async function resolveSkillsRoots(options: CliOptions): Promise<PromptRootsResul
     return resolveExplicitScope(options.scope, options.target);
   }
 
-  if (await isLikelySkillsRoot(process.cwd())) {
-    const currentPath = process.cwd();
+  if (!process.stdin.isTTY && (await isLikelySkillsRoot(process.cwd()))) {
+    // Non-interactive commands need a stable current scope. In particular, an
+    // empty root with an existing skill-index is still a valid target for
+    // read-only commands and must not fall through to the user's global roots.
+    const currentPath = path.resolve(process.cwd());
     return rootsResult(
       [
         {
@@ -262,42 +573,18 @@ async function resolveSkillsRoots(options: CliOptions): Promise<PromptRootsResul
     );
   }
 
-  const directRoots = await discoverSkillsRootsAtPath(process.cwd(), options.target);
-  if (directRoots.length > 0) {
-    return rootsResult(directRoots, null);
-  }
-
-  const projectRoots = await discoverProjectSkillsRootsAtPath(process.cwd(), options.target);
-  if (projectRoots !== null) {
-    return rootsResult(projectRoots.roots, projectRoots.projectPath);
-  }
-
-  const globalRoots = await discoverGlobalSkillsRoots(options.target);
-  if (globalRoots.length > 0) {
-    return rootsResult(globalRoots, null);
+  const { candidates, projectPath } = await discoverNoPathCandidates(options);
+  if (candidates.length > 0 || process.stdin.isTTY) {
+    return promptForRootCandidates(candidates, projectPath);
   }
 
   if (!process.stdin.isTTY) {
     throw new SkillzeroError(
-      "Pass a positional skills root or project path when running non-interactively.",
+      "No supported skills paths found. Pass a positional skills root or project path when running non-interactively.",
     );
   }
 
-  const selectedPath = await p.path({
-    message: "Select the skills directory",
-    directory: true,
-  });
-
-  if (p.isCancel(selectedPath)) {
-    return { status: "cancelled" };
-  }
-
-  return {
-    status: "ok",
-    paths: [selectedPath],
-    projectPath: null,
-    discoveredRoots: [],
-  };
+  return { status: "cancelled" };
 }
 
 async function resolveSkillInventories(

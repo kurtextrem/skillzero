@@ -61,6 +61,8 @@ describe("buildMovePlan", () => {
     expect(plan.collectionPlan.collectionsChanged).toBe(false);
     expect(formatMovePlan(plan)).toContain("- 📝 No update to 1 managed skill(s).");
     expect(formatMovePlan(plan)).toContain("- 📚 No update to collections.");
+    expect(formatMovePlan(plan)).toContain("Skillzero now saves ");
+    expect(formatMovePlan(plan)).toContain(" tokens for you.");
   });
 
   it("rejects duplicate active and managed skill folder names", async () => {

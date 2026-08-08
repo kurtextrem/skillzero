@@ -1,12 +1,12 @@
 # skillzero
 
-Nowadays agents see each installed skill's name and description instead of loading the full `SKILL.md`. That is cheap with a tiny amount of skills, but 100 x "name + 1-2 sentences" is still a lot of potentially wasted tokens. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057) have hit this issue in the past as well.
+In modern harness, agents see each installed skill's name and description instead of loading the full `SKILL.md`. That is cheap with a tiny amount of skills, but 100𝑥"name: description" is still a lot of potentially wasted tokens and context pollution. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057) have hit this issue in the past as well.
 
 `skillzero` solves that by allowing you to split skills into managed skill collections:
 
 1. **Top-level skills**: regular skills / untouched by skillzero
 2. **Managed skills**: the agent can find those through one `skill-index` skill
-3. **Collection skills**: the agent can find skills inside collection by reading the collection index skill + description.
+3. **Collection skills**: the agent can find skills inside collection by reading the collection index skill and description.
 
 ## Usage
 
@@ -66,7 +66,7 @@ Keep a skill top-level when you use it frequently:
 
 ## Development
 
-This project uses [Aube](https://aube.en.dev/).
+This project uses the very fast package manager [Aube](https://aube.en.dev/).
 
 ```sh
 aube install

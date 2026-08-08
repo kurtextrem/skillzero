@@ -1,6 +1,7 @@
 import { AutocompletePrompt, getRows, isCancel, wrapTextWithPrefix } from "@clack/core";
 import { pathToFileURL } from "node:url";
 
+import { estimateSkillMetadataTokens } from "./tokens.js";
 import { accent, bold, dim, terminalLink } from "./ui.js";
 
 export interface VisibleMultiselectOption {
@@ -55,26 +56,42 @@ export function formatSourceLink(source: string): string {
   return terminalLink(source, pathToFileURL(source).href);
 }
 
-function formatDescription(description: string | undefined, source: string | undefined): string[] {
+function formatDescription(
+  name: string | undefined,
+  description: string | undefined,
+  source: string | undefined,
+): string[] {
   const normalizedDescription = description?.trim();
   const sourceLine = source ? [`    ${dim("Source:")} ${formatSourceLink(source)}`] : [];
   if (!normalizedDescription) {
-    return sourceLine;
+    return name
+      ? [
+          dim(`The agent sees these ${estimateSkillMetadataTokens(name, "")} tokens:`),
+          ...sourceLine,
+        ]
+      : sourceLine;
   }
 
   const wrappedLines = wrapTextWithPrefix(process.stdout, normalizedDescription, "    ").split(
     "\n",
   );
   const maxLines = Math.max(2, Math.min(MAX_DETAIL_LINES, getRows(process.stdout) - 9));
+  const descriptionHeader = name
+    ? dim(
+        `The agent sees these ${estimateSkillMetadataTokens(name, normalizedDescription)} tokens:`,
+      )
+    : null;
   if (wrappedLines.length <= maxLines) {
-    return sourceLine.length > 0 ? [...wrappedLines, "", ...sourceLine] : wrappedLines;
+    const detailLines = descriptionHeader ? [descriptionHeader, ...wrappedLines] : wrappedLines;
+    return sourceLine.length > 0 ? [...detailLines, "", ...sourceLine] : detailLines;
   }
 
   const truncatedLines = [
     ...wrappedLines.slice(0, maxLines - 1),
     `    ${dim("[description truncated]")}`,
   ];
-  return sourceLine.length > 0 ? [...truncatedLines, "", ...sourceLine] : truncatedLines;
+  const detailLines = descriptionHeader ? [descriptionHeader, ...truncatedLines] : truncatedLines;
+  return sourceLine.length > 0 ? [...detailLines, "", ...sourceLine] : detailLines;
 }
 
 export function formatVisibleOptions(
@@ -134,9 +151,12 @@ export async function promptVisibleMultiselect(
           : ` ${dim(`(${this.filteredOptions.length} matches)`)}`;
       const search = this.userInput.length > 0 ? this.userInputWithCursor : dim("type to filter");
       const focusedOption = this.filteredOptions[this.cursor];
-      const details = formatDescription(focusedOption?.description, focusedOption?.source);
-      const detailBlock =
-        details.length > 0 ? ["", dim("Description visible to agent:"), ...details] : [];
+      const details = formatDescription(
+        focusedOption?.label,
+        focusedOption?.description,
+        focusedOption?.source,
+      );
+      const detailBlock = details.length > 0 ? ["", ...details] : [];
       const header = [
         `${accent("?")}  ${options.message}`,
         `${dim("↑/↓")} navigate ${dim("•")} ${dim("Space/Tab")} toggle ${dim("•")} ${dim("Enter")} confirm`,

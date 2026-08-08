@@ -1,37 +1,37 @@
 {
-  "name": "skillzero",
-  "version": "1.0.0",
-  "description": "CLI for hiding many agent skills behind one generated skill index.",
-  "bin": {
-    "skillzero": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "type": "module",
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "dev": "bun src/index.ts",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "format": "oxfmt"
-  },
-  "dependencies": {
-    "@11ty/gray-matter": "^3.0.0",
-    "@clack/core": "^1.4.3",
-    "@clack/prompts": "^1.7.0",
-    "cac": "^7.0.0",
-    "tokenx": "^2.1.0"
-  },
-  "devDependencies": {
-    "@types/node": "^25.9.5",
-    "oxfmt": "^0.62.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  },
-  "engines": {
-    "node": ">=20.19.0"
-  },
-  "packageManager": "aube@1.37.0"
+	"name": "skillzero",
+	"version": "1.0.0",
+	"description": "CLI for hiding many agent skills behind one generated skill index.",
+	"bin": {
+		"skillzero": "./dist/index.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"type": "module",
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"dev": "bun src/index.ts",
+		"typecheck": "tsc -p tsconfig.json",
+		"test": "vitest run",
+		"format": "oxfmt"
+	},
+	"dependencies": {
+		"@11ty/gray-matter": "^3.0.0",
+		"@clack/core": "^1.4.3",
+		"@clack/prompts": "^1.7.0",
+		"cac": "^7.0.0",
+		"tokenx": "^2.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^25.9.5",
+		"oxfmt": "^0.62.0",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.10"
+	},
+	"engines": {
+		"node": ">=20.19.0"
+	},
+	"packageManager": "aube@1.37.0"
 }

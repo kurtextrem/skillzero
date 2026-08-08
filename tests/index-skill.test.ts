@@ -6,31 +6,31 @@ import { generateIndexSkill } from "../src/index-skill.js";
 import type { SkillCollection, SkillRecord } from "../src/types.js";
 
 function managedSkill(rootPath: string, id: string, description: string): SkillRecord {
-  const directory = path.join(rootPath, "skill-index", "skills", id);
-  return {
-    id,
-    title: id,
-    description,
-    disableModelInvocation: false,
-    directory,
-    skillFile: path.join(directory, "_SKILL.md"),
-    origin: "managed",
-  };
+	const directory = path.join(rootPath, "skill-index", "skills", id);
+	return {
+		id,
+		title: id,
+		description,
+		disableModelInvocation: false,
+		directory,
+		skillFile: path.join(directory, "_SKILL.md"),
+		origin: "managed",
+	};
 }
 
 describe("generateIndexSkill", () => {
-  it("renders a generated skill with a managed skills table", () => {
-    const rootPath = "/tmp/project/.codex/skills";
-    const indexPath = path.join(rootPath, "skill-index");
-    const content = generateIndexSkill(
-      [
-        managedSkill(rootPath, "api-builder", "Build | review API contracts."),
-        managedSkill(rootPath, "ui-polish", "Improve UI quality."),
-      ],
-      indexPath,
-    );
+	it("renders a generated skill with a managed skills table", () => {
+		const rootPath = "/tmp/project/.codex/skills";
+		const indexPath = path.join(rootPath, "skill-index");
+		const content = generateIndexSkill(
+			[
+				managedSkill(rootPath, "api-builder", "Build | review API contracts."),
+				managedSkill(rootPath, "ui-polish", "Improve UI quality."),
+			],
+			indexPath,
+		);
 
-    expect(content).toMatchInlineSnapshot(`
+		expect(content).toMatchInlineSnapshot(`
       "---
       name: skill-index
       description: "Use this skill when a user asks about available skills, wants to manage skills or wants to use a skill you don't know."
@@ -58,30 +58,30 @@ describe("generateIndexSkill", () => {
       | \`ui-polish\` | Improve UI quality. | \`skills/ui-polish/_SKILL.md\` |
       "
     `);
-  });
+	});
 
-  it("routes categorized skills through collection manifests", () => {
-    const rootPath = "/tmp/project/.codex/skills";
-    const indexPath = path.join(rootPath, "skill-index");
-    const collection: SkillCollection = {
-      id: "design",
-      title: "Design",
-      description: "Read for tasks related to design.",
-      skillIds: ["ui-polish"],
-    };
-    const content = generateIndexSkill(
-      [
-        managedSkill(rootPath, "api-builder", "Build APIs."),
-        managedSkill(rootPath, "ui-polish", "Improve UI quality."),
-      ],
-      indexPath,
-      [collection],
-    );
+	it("routes categorized skills through collection manifests", () => {
+		const rootPath = "/tmp/project/.codex/skills";
+		const indexPath = path.join(rootPath, "skill-index");
+		const collection: SkillCollection = {
+			id: "design",
+			title: "Design",
+			description: "Read for tasks related to design.",
+			skillIds: ["ui-polish"],
+		};
+		const content = generateIndexSkill(
+			[
+				managedSkill(rootPath, "api-builder", "Build APIs."),
+				managedSkill(rootPath, "ui-polish", "Improve UI quality."),
+			],
+			indexPath,
+			[collection],
+		);
 
-    expect(content).toContain(
-      "| Design | Read for tasks related to design. | `collections/design/SKILL.md` |",
-    );
-    expect(content).toContain("| `api-builder` | Build APIs. | `skills/api-builder/_SKILL.md` |");
-    expect(content).not.toContain("| `ui-polish` | Improve UI quality.");
-  });
+		expect(content).toContain(
+			"| Design | Read for tasks related to design. | `collections/design/SKILL.md` |",
+		);
+		expect(content).toContain("| `api-builder` | Build APIs. | `skills/api-builder/_SKILL.md` |");
+		expect(content).not.toContain("| `ui-polish` | Improve UI quality.");
+	});
 });

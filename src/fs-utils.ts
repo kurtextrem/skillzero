@@ -3,53 +3,53 @@ import { access, readFile, stat } from "node:fs/promises";
 export type PathKind = "missing" | "file" | "directory" | "other";
 
 function hasErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+	return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 export async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return false;
-    }
+	try {
+		await access(filePath);
+		return true;
+	} catch (error) {
+		if (hasErrorCode(error, "ENOENT")) {
+			return false;
+		}
 
-    throw error;
-  }
+		throw error;
+	}
 }
 
 export async function getPathKind(filePath: string): Promise<PathKind> {
-  try {
-    const details = await stat(filePath);
-    if (details.isDirectory()) {
-      return "directory";
-    }
+	try {
+		const details = await stat(filePath);
+		if (details.isDirectory()) {
+			return "directory";
+		}
 
-    if (details.isFile()) {
-      return "file";
-    }
+		if (details.isFile()) {
+			return "file";
+		}
 
-    return "other";
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return "missing";
-    }
+		return "other";
+	} catch (error) {
+		if (hasErrorCode(error, "ENOENT")) {
+			return "missing";
+		}
 
-    throw error;
-  }
+		throw error;
+	}
 }
 
 export async function hasDifferentFileContent(
-  filePath: string,
-  expectedContent: string,
+	filePath: string,
+	expectedContent: string,
 ): Promise<boolean> {
-  const kind = await getPathKind(filePath);
-  if (kind !== "file") {
-    // Callers validate destination conflicts before comparing generated files;
-    // missing files are changes, while invalid paths are handled there.
-    return true;
-  }
+	const kind = await getPathKind(filePath);
+	if (kind !== "file") {
+		// Callers validate destination conflicts before comparing generated files;
+		// missing files are changes, while invalid paths are handled there.
+		return true;
+	}
 
-  return (await readFile(filePath, "utf8")) !== expectedContent;
+	return (await readFile(filePath, "utf8")) !== expectedContent;
 }

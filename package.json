@@ -1,7 +1,7 @@
 {
 	"name": "skillzero",
 	"version": "1.0.0",
-	"description": "CLI for hiding many agent skills behind one generated skill index.",
+	"description": "CLI for hiding agent skills and creating focused collections.",
 	"bin": {
 		"skillzero": "./dist/index.js"
 	},

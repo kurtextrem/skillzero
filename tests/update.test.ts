@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { access, constants, readFile, realpath } from "node:fs/promises";
+import { access, constants, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,13 +25,11 @@ vi.mock("../src/multiselect.js", () => ({
 }));
 
 import { runCli } from "../src/cli.js";
-import {
-	applyManagedSkillsPlan,
-	buildManagedSkillsPlan,
-	readManagedSkillsState,
-} from "../src/managed-skills.js";
+import { applyManagedSkillsPlan, buildManagedSkillsPlan } from "../src/managed-skills.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeSkill } from "./helpers.js";
+
+import type { SkillCollection } from "../src/types.js";
 
 interface CapturedRun {
 	code: number;
@@ -99,9 +97,23 @@ async function configureManagedSkill(
 ): Promise<void> {
 	await writeSkill(rootPath, name, content);
 	const inventory = await scanSkills(rootPath);
-	await applyManagedSkillsPlan(
-		await buildManagedSkillsPlan(inventory, { indexIds: [name], hideIds: [] }, null),
-	);
+	await applyManagedSkillsPlan(await buildManagedSkillsPlan(inventory, [name], null));
+}
+
+async function replaceCollections(
+	rootPath: string,
+	collections: SkillCollection[],
+): Promise<string> {
+	// Tests that simulate an externally stale collection must preserve the
+	// restoration hashes stored beside it in the unified state file.
+	const state = (await scanSkills(rootPath)).state;
+	if (state === null) {
+		throw new Error("Expected configured skillzero state.");
+	}
+
+	const stateFile = path.join(rootPath, "skillzero", "state.json");
+	await writeFile(stateFile, `${JSON.stringify({ ...state, collections }, null, 2)}\n`, "utf8");
+	return stateFile;
 }
 
 describe("skillzero update", () => {
@@ -115,7 +127,7 @@ describe("skillzero update", () => {
 		visibleMultiselectMock.mockReset();
 	});
 
-	it("updates every discovered project root, forwards skills args, and rebuilds the indexes", async () => {
+	it("updates every discovered project root without managing newly installed skills", async () => {
 		const projectPath = await createTempRoot();
 		const agentsRoot = path.join(projectPath, ".agents", "skills");
 		const codexRoot = path.join(projectPath, ".codex", "skills");
@@ -149,8 +161,8 @@ describe("skillzero update", () => {
 		expect(result.stdout).toContain("New skills found");
 		expect(result.stdout).toContain("- new-shared — New shared skill.");
 		expect(result.stdout).not.toContain("Nested details should stay out of the notification row.");
-		await expect(exists(path.join(agentsRoot, "skill-index", "SKILL.md"))).resolves.toBe(true);
-		await expect(exists(path.join(codexRoot, "skill-index", "SKILL.md"))).resolves.toBe(true);
+		await expect(exists(path.join(agentsRoot, "skillzero", "SKILL.md"))).resolves.toBe(false);
+		await expect(exists(path.join(codexRoot, "skillzero", "SKILL.md"))).resolves.toBe(false);
 		await expect(
 			exists(path.join(agentsRoot, "shared-skill", "agents", "openai.yaml")),
 		).resolves.toBe(true);
@@ -159,6 +171,20 @@ describe("skillzero update", () => {
 		);
 		await expect(exists(path.join(agentsRoot, "new-shared", "SKILL.md"))).resolves.toBe(true);
 		await expect(exists(path.join(codexRoot, "new-codex", "SKILL.md"))).resolves.toBe(true);
+		await expect(
+			exists(path.join(agentsRoot, "new-shared", "agents", "openai.yaml")),
+		).resolves.toBe(false);
+		await expect(exists(path.join(codexRoot, "new-codex", "agents", "openai.yaml"))).resolves.toBe(
+			false,
+		);
+		expect((await scanSkills(agentsRoot)).state).toMatchObject({
+			knownIds: ["new-shared", "shared-skill"],
+			skills: [{ id: "shared-skill" }],
+		});
+		expect((await scanSkills(codexRoot)).state).toMatchObject({
+			knownIds: ["codex-only", "new-codex"],
+			skills: [{ id: "codex-only" }],
+		});
 
 		const secondResult = await captureRunFrom(projectPath, ["update", "--yes", "--", "-p", "-y"]);
 
@@ -166,7 +192,7 @@ describe("skillzero update", () => {
 		expect(secondResult.stdout).not.toContain("New skills found");
 	});
 
-	it("leaves managed metadata and the index intact when skills update fails", async () => {
+	it("leaves managed metadata intact when skills update fails", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(
 			rootPath,
@@ -180,41 +206,41 @@ describe("skillzero update", () => {
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain("skills update exited with status 1");
 		await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);
-		await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
 		await expect(exists(path.join(rootPath, "ui-polish", "agents", "openai.yaml"))).resolves.toBe(
 			true,
 		);
 	});
 
-	it("moves indexed skills into hide mode and preserves that mode during updates", async () => {
+	it("uses hidden selection first and exposes only assigned collection skills", async () => {
 		const rootPath = await createTempRoot();
-		await writeSkill(rootPath, "indexed", "---\ndescription: Indexed skill.\n---\n");
+		await writeSkill(rootPath, "collection-skill", "---\ndescription: Collection skill.\n---\n");
 		await writeSkill(rootPath, "private", "---\ndescription: Private skill.\n---\n");
-		const inventory = await scanSkills(rootPath);
-		await applyManagedSkillsPlan(
-			await buildManagedSkillsPlan(
-				inventory,
-				{ indexIds: ["indexed", "private"], hideIds: [] },
-				null,
-			),
-		);
+		promptConfirmMock.mockResolvedValue(true);
+		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
 		visibleMultiselectMock.mockImplementationOnce(
 			(options: { initialValues: string[]; message: string }) => {
-				expect(options.initialValues).toEqual([]);
-				expect(options.message).toContain("👻 hidden skill · 📚 collection membership");
+				expect(options.initialValues).toEqual(["collection-skill", "private"]);
+				expect(options.message).toContain("👻 hidden · 📚 collection");
 				return Promise.resolve({ status: "ok", selectedIds: ["private"] });
 			},
 		);
-
-		const hideResult = await captureRunFrom(rootPath, ["hide", "--yes"]);
-
-		expect(hideResult.code, hideResult.stderr).toBe(0);
-		await expect(readManagedSkillsState(await scanSkills(rootPath))).resolves.toMatchObject({
-			skills: [
-				{ id: "indexed", mode: "index" },
-				{ id: "private", mode: "hide" },
-			],
+		visibleMultiselectMock.mockResolvedValueOnce({
+			status: "ok",
+			selectedIds: ["collection-skill"],
 		});
+
+		const configureResult = await captureRunFrom(rootPath, []);
+
+		expect(configureResult.code, configureResult.stderr).toBe(0);
+		expect((await scanSkills(rootPath)).state).toMatchObject({
+			version: 1,
+			skills: [{ id: "collection-skill" }, { id: "private" }],
+		});
+		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
+		await expect(
+			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+		).resolves.toContain("collection-skill");
 		visibleMultiselectMock.mockImplementationOnce(
 			(options: {
 				initialValues: string[];
@@ -222,47 +248,39 @@ describe("skillzero update", () => {
 				options: { value: string; hint?: string }[];
 			}) => {
 				expect(options.initialValues).toEqual(["private"]);
-				expect(options.message).toContain("👻 hidden skill · 📚 collection membership");
+				expect(options.message).toContain("👻 hidden · 📚 collection");
 				expect(options.options.find((option) => option.value === "private")?.hint).toBe(
 					"👻 hidden",
+				);
+				expect(options.options.find((option) => option.value === "collection-skill")?.hint).toBe(
+					"📚 Design",
 				);
 				return Promise.resolve({ status: "ok", selectedIds: ["private"] });
 			},
 		);
-		const hidePreviewResult = await captureRunFrom(rootPath, ["hide", "--dry-run"]);
-		expect(hidePreviewResult.code, hidePreviewResult.stderr).toBe(0);
+		const previewResult = await captureRunFrom(rootPath, ["--dry-run"]);
+		expect(previewResult.code, previewResult.stderr).toBe(0);
 
 		const updateResult = await captureRunFrom(rootPath, ["update", "--yes"]);
 
 		expect(updateResult.code, updateResult.stderr).toBe(0);
-		expect(visibleMultiselectMock).toHaveBeenCalledTimes(2);
-		await expect(readManagedSkillsState(await scanSkills(rootPath))).resolves.toMatchObject({
-			skills: [
-				{ id: "indexed", mode: "index" },
-				{ id: "private", mode: "hide" },
-			],
+		expect(visibleMultiselectMock).toHaveBeenCalledTimes(3);
+		expect((await scanSkills(rootPath)).state).toMatchObject({
+			skills: [{ id: "collection-skill" }, { id: "private" }],
 		});
 	});
 
 	it("asks before removing unknown skills from a collection and preserves them when declined", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(rootPath, "docs", "---\ndescription: Write docs.\n---\n");
-		const collectionConfigFile = path.join(rootPath, "skill-index", "collections.json");
-		writeFileSync(
-			collectionConfigFile,
-			`${JSON.stringify({
-				version: 1,
-				collections: [
-					{
-						id: "deslop",
-						title: "Deslop",
-						description: "Improve text.",
-						skillIds: ["docs", "removed-skill"],
-					},
-				],
-			})}\n`,
-			"utf8",
-		);
+		const stateFile = await replaceCollections(rootPath, [
+			{
+				id: "deslop",
+				title: "Deslop",
+				description: "Improve text.",
+				skillIds: ["docs", "removed-skill"],
+			},
+		]);
 		promptConfirmMock.mockResolvedValue(false);
 
 		const result = await captureRunFrom(rootPath, []);
@@ -272,41 +290,9 @@ describe("skillzero update", () => {
 			message: "Remove from collection?",
 			initialValue: true,
 		});
-		expect(JSON.parse(await readFile(collectionConfigFile, "utf8"))).toMatchObject({
+		expect(JSON.parse(await readFile(stateFile, "utf8"))).toMatchObject({
 			collections: [{ skillIds: ["docs", "removed-skill"] }],
 		});
-	});
-
-	it("offers collection setup during initial configuration", async () => {
-		const rootPath = await createTempRoot();
-		await writeSkillSynchronously(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
-
-		promptConfirmMock.mockResolvedValue(true);
-		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
-		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
-		visibleMultiselectMock
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
-
-		const result = await captureRunFrom(rootPath, []);
-
-		expect(result.code).toBe(0);
-		const collectionSkillFile = path.join(
-			rootPath,
-			"skill-index",
-			"collections",
-			"design",
-			"SKILL.md",
-		);
-		await expect(exists(collectionSkillFile)).resolves.toBe(true);
-		await expect(readFile(collectionSkillFile, "utf8")).resolves.toContain(
-			'description: "Use when design tasks."',
-		);
-		expect(promptTextMock).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({ message: "Use when:", initialValue: "" }),
-		);
-		expect(promptSelectMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("sorts picker metadata states after ordinary skills", async () => {
@@ -340,7 +326,10 @@ describe("skillzero update", () => {
 					["b-policy", "👻 lacks disable-model-invocation"],
 					["a-both", "👻 ✅"],
 				]);
-				return Promise.resolve({ status: "ok", selectedIds: [] });
+				return Promise.resolve({
+					status: "ok",
+					selectedIds: options.options.map((option) => option.value),
+				});
 			},
 		);
 
@@ -349,25 +338,18 @@ describe("skillzero update", () => {
 		expect(result.code, result.stderr).toBe(0);
 	});
 
-	it("edits the collection use condition without duplicating its prefix", async () => {
+	it("edits the collection use condition without managing unrelated skills", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
-		const collectionConfigFile = path.join(rootPath, "skill-index", "collections.json");
-		writeFileSync(
-			collectionConfigFile,
-			`${JSON.stringify({
-				version: 1,
-				collections: [
-					{
-						id: "design",
-						title: "Design",
-						description: "Use when design tasks.",
-						skillIds: ["existing"],
-					},
-				],
-			})}\n`,
-			"utf8",
-		);
+		writeSkillSynchronously(rootPath, "unmanaged", "---\ndescription: Unmanaged skill.\n---\n");
+		const stateFile = await replaceCollections(rootPath, [
+			{
+				id: "design",
+				title: "Design",
+				description: "Use when design tasks.",
+				skillIds: ["existing"],
+			},
+		]);
 
 		promptSelectMock
 			.mockResolvedValueOnce("edit")
@@ -386,11 +368,18 @@ describe("skillzero update", () => {
 		expect(result.code, result.stderr).toBe(0);
 		expect(promptTextMock).toHaveBeenNthCalledWith(
 			2,
-			expect.objectContaining({ message: "Use when:", initialValue: "design tasks." }),
+			expect.objectContaining({ message: "Model should use when:", initialValue: "design tasks." }),
 		);
-		expect(JSON.parse(await readFile(collectionConfigFile, "utf8"))).toMatchObject({
+		expect(JSON.parse(await readFile(stateFile, "utf8"))).toMatchObject({
 			collections: [{ description: "Use when visual design work." }],
 		});
+		expect((await scanSkills(rootPath)).state).toMatchObject({
+			knownIds: ["existing", "unmanaged"],
+			skills: [{ id: "existing" }],
+		});
+		await expect(exists(path.join(rootPath, "unmanaged", "agents", "openai.yaml"))).resolves.toBe(
+			false,
+		);
 	});
 
 	it("shows managed and available paths before a bare run chooses roots", async () => {
@@ -399,12 +388,6 @@ describe("skillzero update", () => {
 		const managedRoot = path.join(resolvedProjectPath, ".agents", "skills");
 		const availableRoot = path.join(resolvedProjectPath, ".codex", "skills");
 		const emptyRoot = path.join(resolvedProjectPath, ".cursor", "skills");
-		mkdirSync(path.join(managedRoot, "skill-index"), { recursive: true });
-		writeFileSync(
-			path.join(managedRoot, "skill-index", "SKILL.md"),
-			"<!-- Generated by skillzero. Do not edit manually. -->\n",
-			"utf8",
-		);
 		await configureManagedSkill(managedRoot, "managed", "---\ndescription: Managed skill.\n---\n");
 		writeSkillSynchronously(
 			availableRoot,
@@ -460,71 +443,7 @@ describe("skillzero update", () => {
 		).resolves.toBe(true);
 	});
 
-	it("skips apply confirmation when a sync only remembers an unselected skill", async () => {
-		const rootPath = await createTempRoot();
-		await writeSkillSynchronously(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
-
-		promptConfirmMock.mockResolvedValue(true);
-		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
-		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
-		visibleMultiselectMock
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
-
-		await expect(captureRunFrom(rootPath, [])).resolves.toMatchObject({
-			code: 0,
-		});
-
-		promptSelectMock.mockReset();
-		promptTextMock.mockReset();
-		visibleMultiselectMock.mockReset();
-		writeSkillSynchronously(
-			rootPath,
-			"new-unselected",
-			"---\ndescription: New unselected skill.\n---\n",
-		);
-		promptConfirmMock.mockImplementation(() => {
-			throw new Error("confirmation should not be requested for internal state");
-		});
-		visibleMultiselectMock.mockImplementationOnce(
-			(options: { options: { value: string; annotation?: string }[] }) => {
-				expect(options.options.map((option) => [option.value, option.annotation])).toEqual([
-					["new-unselected", undefined],
-					["existing", undefined],
-				]);
-				return Promise.resolve({ status: "ok", selectedIds: ["existing"] });
-			},
-		);
-
-		const result = await captureRunFrom(rootPath, []);
-
-		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("New skills found");
-		expect(result.stdout).toContain("No changes needed.");
-		expect(result.stdout).not.toContain("Apply these changes?");
-	});
-
-	it("offers collection setup when syncing an existing path without collections", async () => {
-		const rootPath = await createTempRoot();
-		await configureManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
-
-		promptConfirmMock.mockResolvedValue(true);
-		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
-		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
-		visibleMultiselectMock
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] })
-			.mockResolvedValueOnce({ status: "ok", selectedIds: ["existing"] });
-
-		const result = await captureRunFrom(rootPath, []);
-
-		expect(result.code).toBe(0);
-		await expect(
-			exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
-		).resolves.toBe(true);
-		expect(promptSelectMock).toHaveBeenCalledTimes(2);
-	});
-
-	it("asks for collection assignments when a new skill is selected", async () => {
+	it("offers collection assignment for a newly installed skill left unhidden", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
 		spawnSyncMock.mockImplementation(() => {
@@ -536,23 +455,23 @@ describe("skillzero update", () => {
 		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
 		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
 		visibleMultiselectMock
-			.mockResolvedValueOnce({
-				status: "ok",
-				selectedIds: ["existing", "new-skill"],
+			.mockImplementationOnce((options: { initialValues: string[] }) => {
+				expect(options.initialValues).toEqual(["existing"]);
+				return Promise.resolve({ status: "ok", selectedIds: ["existing"] });
 			})
 			.mockResolvedValueOnce({
 				status: "ok",
-				selectedIds: ["existing", "new-skill"],
+				selectedIds: ["new-skill"],
 			});
 
 		const result = await captureRunFrom(rootPath, ["update"]);
 
 		expect(result.code).toBe(0);
+		await expect(exists(path.join(rootPath, "skillzero", "design", "SKILL.md"))).resolves.toBe(
+			true,
+		);
 		await expect(
-			exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
-		).resolves.toBe(true);
-		await expect(
-			readFile(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
 		).resolves.toContain("new-skill");
 		expect(promptSelectMock).toHaveBeenCalledTimes(2);
 	});

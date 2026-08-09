@@ -6,7 +6,6 @@ import { runCli } from "../src/cli.js";
 import {
 	applyManagedSkillsPlan,
 	buildManagedSkillsPlan,
-	readManagedSkillsState,
 } from "../src/managed-skills.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeSkill } from "./helpers.js";
@@ -83,7 +82,7 @@ describe("skillzero undo and redo", () => {
 		await applyManagedSkillsPlan(
 			await buildManagedSkillsPlan(
 				inventory,
-				{ indexIds: ["ui-polish"], hideIds: ["private-notes"] },
+				["ui-polish", "private-notes"],
 				null,
 				collections,
 			),
@@ -104,11 +103,10 @@ describe("skillzero undo and redo", () => {
 		await expect(
 			exists(path.join(rootPath, "private-notes", "agents", "openai.yaml")),
 		).resolves.toBe(false);
-		await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(false);
 		await expect(
-			exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+			exists(path.join(rootPath, "skillzero", "design", "SKILL.md")),
 		).resolves.toBe(false);
-		await expect(exists(path.join(rootPath, ".skillzero-state.json"))).resolves.toBe(false);
+		await expect(exists(path.join(rootPath, "skillzero"))).resolves.toBe(false);
 		await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(true);
 
 		const redoResult = await captureRunFrom(rootPath, ["redo", "--yes"]);
@@ -120,20 +118,19 @@ describe("skillzero undo and redo", () => {
 		await expect(
 			readFile(path.join(rootPath, "ui-polish", "agents", "openai.yaml"), "utf8"),
 		).resolves.toContain("allow_implicit_invocation: false");
-		await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
+		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
 		await expect(
-			exists(path.join(rootPath, "skill-index", "collections", "design", "SKILL.md")),
+			exists(path.join(rootPath, "skillzero", "design", "SKILL.md")),
 		).resolves.toBe(true);
-		await expect(exists(path.join(rootPath, ".skillzero-state.json"))).resolves.toBe(true);
+		await expect(exists(path.join(rootPath, "skillzero", "state.json"))).resolves.toBe(true);
 		await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(false);
-		await expect(readManagedSkillsState(await scanSkills(rootPath))).resolves.toMatchObject({
-			skills: [
-				{ id: "private-notes", mode: "hide" },
-				{ id: "ui-polish", mode: "index" },
-			],
+		expect((await scanSkills(rootPath)).state).toMatchObject({
+			version: 1,
+			skills: [{ id: "private-notes" }, { id: "ui-polish" }],
+			collections: [{ id: "design", skillIds: ["ui-polish"] }],
 		});
 		await expect(
-			readFile(path.join(rootPath, "skill-index", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
 		).resolves.not.toContain("private-notes");
 	});
 

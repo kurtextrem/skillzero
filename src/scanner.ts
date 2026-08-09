@@ -8,9 +8,10 @@ import {
 	GENERATED_DIR_NAME,
 	SKILL_FILE_NAME,
 } from "./constants.js";
-import { readCollectionConfig, scanGeneratedCollectionIds } from "./collections.js";
+import { scanGeneratedCollectionIds } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
+import { readSkillzeroState } from "./state.js";
 
 import type { SkillInventory, SkillRecord } from "./types.js";
 
@@ -167,10 +168,11 @@ export async function scanSkills(rootPath: string): Promise<SkillInventory> {
 		throw new SkillzeroError(`Path conflict: ${generatedPath} must be a directory.`);
 	}
 
-	const collectionConfig = await readCollectionConfig(generatedPath);
+	const state = await readSkillzeroState(generatedPath);
+	const collections = state?.collections ?? [];
 	const generatedCollectionIds = await scanGeneratedCollectionIds(
 		generatedPath,
-		collectionConfig.collections,
+		collections,
 	);
 
 	const skills = (await scanImmediateSkillChildren(resolvedRoot)).filter(
@@ -181,7 +183,8 @@ export async function scanSkills(rootPath: string): Promise<SkillInventory> {
 		rootPath: resolvedRoot,
 		generatedPath,
 		skills,
-		collections: collectionConfig.collections,
+		state,
+		collections,
 		generatedCollectionIds,
 	};
 }

@@ -8,6 +8,7 @@ export interface VisibleMultiselectOption {
 	value: string;
 	label: string;
 	hint?: string;
+	hideHintWhenSelected?: boolean;
 	annotation?: string;
 	description?: string;
 	source?: string;
@@ -47,7 +48,7 @@ function formatOption(
 	const checkbox = selectedValues.includes(option.value) ? "[x]" : "[ ]";
 	const label = active ? bold(option.label) : dim(option.label);
 	const hideSelectedStateHint =
-		selectedValues.includes(option.value) && option.hint === "managed";
+		selectedValues.includes(option.value) && option.hideHintWhenSelected === true;
 	const hint = option.hint && !hideSelectedStateHint ? ` ${dim(`(${option.hint})`)}` : "";
 	// Keep persistent skill metadata separate from transient selection hints so
 	// it remains visible after a row is selected and never relies on color alone.

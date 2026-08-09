@@ -51,17 +51,6 @@ Use this skill for focused test placement.
 		);
 	});
 
-	it("refuses to overwrite a non-generated skill-index skill", async () => {
-		const rootPath = await createTempRoot();
-		const indexPath = path.join(rootPath, "skill-index");
-		await mkdir(indexPath, { recursive: true });
-		await writeFile(path.join(indexPath, "SKILL.md"), "# Manual Index\n", "utf8");
-
-		await expect(scanSkills(rootPath)).rejects.toThrow(
-			"Refusing to overwrite non-generated index skill",
-		);
-	});
-
 	it("finds a skill whose directory is a symbolic link", async () => {
 		const rootPath = await createTempRoot();
 		const sourceRoot = await createTempRoot();

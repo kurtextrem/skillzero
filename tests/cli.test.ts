@@ -58,12 +58,14 @@ async function captureRunFrom(cwd: string, args: string[]): Promise<CapturedRun>
 	}
 }
 
-async function configureManagedSkill(rootPath: string, name: string, content: string): Promise<void> {
+async function configureManagedSkill(
+	rootPath: string,
+	name: string,
+	content: string,
+): Promise<void> {
 	await writeSkill(rootPath, name, content);
 	const inventory = await scanSkills(rootPath);
-	await applyManagedSkillsPlan(
-		await buildManagedSkillsPlan(inventory, { indexIds: [name], hideIds: [] }, null),
-	);
+	await applyManagedSkillsPlan(await buildManagedSkillsPlan(inventory, [name], null));
 }
 
 describe("runCli", () => {
@@ -86,8 +88,16 @@ describe("runCli", () => {
 		const projectPath = await createTempRoot();
 		const agentsRoot = path.join(projectPath, ".agents", "skills");
 		const codexRoot = path.join(projectPath, ".codex", "skills");
-		await configureManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
-		await configureManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
+		await configureManagedSkill(
+			agentsRoot,
+			"shared-skill",
+			"---\ndescription: Shared skill.\n---\n",
+		);
+		await configureManagedSkill(
+			codexRoot,
+			"codex-only",
+			"---\ndescription: Codex-only skill.\n---\n",
+		);
 
 		const result = await captureRun([projectPath, "--yes"]);
 
@@ -95,9 +105,9 @@ describe("runCli", () => {
 		await expect(
 			exists(path.join(agentsRoot, "shared-skill", "agents", "openai.yaml")),
 		).resolves.toBe(true);
-		await expect(
-			exists(path.join(codexRoot, "codex-only", "agents", "openai.yaml")),
-		).resolves.toBe(true);
+		await expect(exists(path.join(codexRoot, "codex-only", "agents", "openai.yaml"))).resolves.toBe(
+			true,
+		);
 	});
 
 	it("refuses to mutate one SKILL.md linked into separate discovered roots", async () => {
@@ -122,26 +132,34 @@ describe("runCli", () => {
 
 	it("syncs an existing positional skills root", async () => {
 		const rootPath = await createTempRoot();
-		await configureManagedSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
+		await configureManagedSkill(
+			rootPath,
+			"ui-polish",
+			"---\ndescription: Improve UI quality.\n---\n",
+		);
 
 		const result = await captureRun([rootPath, "--yes"]);
 
 		expect(result.code).toBe(0);
-		await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
-		await expect(
-			exists(path.join(rootPath, "ui-polish", "agents", "openai.yaml")),
-		).resolves.toBe(true);
+		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
+		await expect(exists(path.join(rootPath, "ui-polish", "agents", "openai.yaml"))).resolves.toBe(
+			true,
+		);
 	});
 
 	it("removes stale collection memberships during an approved sync", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(rootPath, "docs", "---\ndescription: Write docs.\n---\n");
-		const collectionConfigFile = path.join(rootPath, "skill-index", "collections.json");
+		const state = (await scanSkills(rootPath)).state;
+		if (state === null) {
+			throw new Error("Expected configured skillzero state.");
+		}
+		const stateFile = path.join(rootPath, "skillzero", "state.json");
 		await writeFile(
-			collectionConfigFile,
+			stateFile,
 			`${JSON.stringify(
 				{
-					version: 1,
+					...state,
 					collections: [
 						{
 							id: "deslop",
@@ -161,19 +179,19 @@ describe("runCli", () => {
 
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(JSON.parse(await readFile(collectionConfigFile, "utf8"))).toMatchObject({
+		expect(JSON.parse(await readFile(stateFile, "utf8"))).toMatchObject({
 			collections: [{ id: "deslop", skillIds: ["docs"] }],
 		});
 	});
 
 	it("runs collections as an explicit command", async () => {
 		const rootPath = await createTempRoot();
-		await mkdir(path.join(rootPath, "skill-index"), { recursive: true });
+		await mkdir(path.join(rootPath, "skillzero"), { recursive: true });
 
 		const result = await captureRunFrom(rootPath, ["collections", "--dry-run"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("No indexed skills or collections found");
+		expect(result.stdout).toContain("No collection skills or collections found");
 	});
 
 	it("reports missing paths", async () => {

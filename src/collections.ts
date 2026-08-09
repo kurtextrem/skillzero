@@ -1,26 +1,15 @@
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import {
-	COLLECTIONS_DIR_NAME,
-	COLLECTION_CONFIG_FILE_NAME,
-	GENERATED_MARKER,
-	SKILL_FILE_NAME,
-} from "./constants.js";
+import { GENERATED_MARKER, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
-import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
+import { getPathKind, hasDifferentFileContent, removeEmptyDirectory } from "./fs-utils.js";
 import { EMOJI } from "./ui.js";
 
 import type { SkillCollection, SkillInventory, SkillRecord } from "./types.js";
 
-interface CollectionConfig {
-	version: 1;
-	collections: SkillCollection[];
-}
-
 export interface CollectionPlan {
 	generatedPath: string;
-	collectionConfigContent: string;
 	collectionSkillFiles: { path: string; content: string }[];
 	finalCollections: SkillCollection[];
 	generatedCollectionIdsToRemove: string[];
@@ -104,22 +93,16 @@ function parseCollection(value: unknown, filePath: string, index: number): Skill
 	return { id, title, description, skillIds };
 }
 
-function parseCollectionConfig(content: string, filePath: string): CollectionConfig {
-	let value: unknown;
-	try {
-		value = JSON.parse(content);
-	} catch {
-		throw new SkillzeroError(`Invalid skillzero collection config: ${filePath}`);
+// Active state and redo snapshots persist the same domain records. Keep their
+// validation and normalization here so both formats have one contract.
+export function parseSkillCollections(value: unknown, filePath: string): SkillCollection[] {
+	if (!Array.isArray(value)) {
+		throw new SkillzeroError(`Invalid collections in ${filePath}`);
 	}
 
-	if (!isRecord(value) || value["version"] !== 1 || !Array.isArray(value["collections"])) {
-		throw new SkillzeroError(`Invalid skillzero collection config: ${filePath}`);
-	}
-
-	const storedCollections = value["collections"];
 	const ids = new Set<string>();
 	const collections: SkillCollection[] = [];
-	for (const [index, collectionValue] of storedCollections.entries()) {
+	for (const [index, collectionValue] of value.entries()) {
 		const collection = parseCollection(collectionValue, filePath, index);
 		if (ids.has(collection.id)) {
 			throw new SkillzeroError(`Duplicate collection id in ${filePath}: ${collection.id}`);
@@ -129,20 +112,13 @@ function parseCollectionConfig(content: string, filePath: string): CollectionCon
 		collections.push(collection);
 	}
 
-	collections.sort((left, right) => left.id.localeCompare(right.id));
-	return { version: 1, collections: collections.map(normalizeCollection) };
-}
-
-export function collectionsPath(generatedPath: string): string {
-	return path.join(generatedPath, COLLECTIONS_DIR_NAME);
-}
-
-export function collectionConfigPath(generatedPath: string): string {
-	return path.join(generatedPath, COLLECTION_CONFIG_FILE_NAME);
+	return collections
+		.sort((left, right) => left.id.localeCompare(right.id))
+		.map(normalizeCollection);
 }
 
 export function collectionDirectoryPath(generatedPath: string, collectionId: string): string {
-	return path.join(collectionsPath(generatedPath), collectionId);
+	return path.join(generatedPath, collectionId);
 }
 
 function collectionSkillFilePath(generatedPath: string, collectionId: string): string {
@@ -157,21 +133,6 @@ export function collectionIdFromTitle(title: string): string {
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
 	return id.length > 0 ? id : "collection";
-}
-
-export async function readCollectionConfig(generatedPath: string): Promise<CollectionConfig> {
-	// Keep collection membership in a small machine-owned file so generated
-	// routing skills can be rebuilt after a skill update without editing them.
-	const filePath = collectionConfigPath(generatedPath);
-	const kind = await getPathKind(filePath);
-	if (kind === "missing") {
-		return { version: 1, collections: [] };
-	}
-	if (kind !== "file") {
-		throw new SkillzeroError(`Collection config must be a file: ${filePath}`);
-	}
-
-	return parseCollectionConfig(await readFile(filePath, "utf8"), filePath);
 }
 
 async function validateConfiguredCollectionFiles(
@@ -210,7 +171,7 @@ export async function scanGeneratedCollectionIds(
 	// SKILL.md in this reserved tree must stop the run before a write occurs.
 	await validateConfiguredCollectionFiles(generatedPath, configuredCollections);
 
-	const rootPath = collectionsPath(generatedPath);
+	const rootPath = generatedPath;
 	const rootKind = await getPathKind(rootPath);
 	if (rootKind === "missing") {
 		return [];
@@ -317,15 +278,12 @@ export async function buildCollectionPlan(
 	const normalizedCollections = finalCollections.map(normalizeCollection);
 	// Plans carry the exact bytes they validate. Applying a confirmed plan must
 	// not rerun rendering against domain records that a caller could mutate.
-	const collectionConfigContent = `${JSON.stringify({ version: 1, collections: normalizedCollections }, null, 2)}\n`;
 	const collectionSkillFiles = normalizedCollections.map((collection) => ({
 		path: collectionSkillFilePath(inventory.generatedPath, collection.id),
 		content: generateCollectionSkill(collection, finalManagedSkills, inventory.generatedPath),
 	}));
-	const configFile = collectionConfigPath(inventory.generatedPath);
 	const plan: CollectionPlan = {
 		generatedPath: inventory.generatedPath,
-		collectionConfigContent,
 		collectionSkillFiles,
 		finalCollections: normalizedCollections,
 		generatedCollectionIdsToRemove: inventory.generatedCollectionIds
@@ -335,17 +293,11 @@ export async function buildCollectionPlan(
 	};
 
 	await validateCollectionDestinations(plan);
-	let collectionsChanged = await hasDifferentFileContent(
-		configFile,
-		plan.collectionConfigContent,
-	);
-
-	if (!collectionsChanged) {
-		for (const file of plan.collectionSkillFiles) {
-			if (await hasDifferentFileContent(file.path, file.content)) {
-				collectionsChanged = true;
-				break;
-			}
+	let collectionsChanged = false;
+	for (const file of plan.collectionSkillFiles) {
+		if (await hasDifferentFileContent(file.path, file.content)) {
+			collectionsChanged = true;
+			break;
 		}
 	}
 
@@ -408,7 +360,7 @@ ${tableRows}
 export function formatCollectionPlan(plan: CollectionPlan): string {
 	const lines = [
 		plan.collectionsChanged
-			? `- ${EMOJI.collection} Update collections.json with ${plan.finalCollections.length} collection(s).`
+			? `- ${EMOJI.collection} Update ${plan.finalCollections.length} collection(s).`
 			: `- ${EMOJI.collection} No update to collections.`,
 	];
 	for (const collection of plan.finalCollections) {
@@ -423,8 +375,6 @@ export function formatCollectionPlan(plan: CollectionPlan): string {
 }
 
 export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
-	await mkdir(collectionsPath(plan.generatedPath), { recursive: true });
-
 	for (const file of plan.collectionSkillFiles) {
 		await mkdir(path.dirname(file.path), { recursive: true });
 		await writeFile(file.path, file.content, "utf8");
@@ -434,6 +384,7 @@ export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
 		const skillFile = collectionSkillFilePath(plan.generatedPath, collectionId);
 		const kind = await getPathKind(skillFile);
 		if (kind === "missing") {
+			await removeEmptyDirectory(collectionDirectoryPath(plan.generatedPath, collectionId));
 			continue;
 		}
 		if (kind !== "file") {
@@ -445,11 +396,10 @@ export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
 			throw new SkillzeroError(`Refusing to remove non-generated collection skill: ${skillFile}`);
 		}
 		await unlink(skillFile);
+		await removeEmptyDirectory(collectionDirectoryPath(plan.generatedPath, collectionId));
 	}
 
-	await writeFile(
-		collectionConfigPath(plan.generatedPath),
-		plan.collectionConfigContent,
-		"utf8",
-	);
+	// This also handles an orphaned generated collection tree with no state;
+	// active state or any user file naturally keeps the reserved root in place.
+	await removeEmptyDirectory(plan.generatedPath);
 }

@@ -18,25 +18,26 @@ describe("formatVisibleOptions", () => {
 		]);
 	});
 
-	it("hides selected-state hints while keeping collection and metadata annotations", () => {
+	it("hides selected hidden hints while keeping collection and metadata annotations", () => {
 		const options = [
 			{
-				value: "managed",
-				label: "managed",
-				hint: "managed",
-				annotation: "hidden from agent ✅",
+				value: "hidden",
+				label: "hidden",
+				hint: "👻 hidden",
+				hideHintWhenSelected: true,
+				annotation: "👻 ✅",
 			},
 			{
 				value: "design",
 				label: "design",
 				hint: "📚 Other collection",
-				annotation: "hidden from agent ❌ - lacks OpenAI policy",
+				annotation: "👻 ❌ - lacks OpenAI policy",
 			},
 		];
 
-		expect(formatVisibleOptions(options, 0, ["managed", "design"], 2)).toEqual([
-			"  > [x] managed (hidden from agent ✅)",
-			"    [x] design (📚 Other collection) (hidden from agent ❌ - lacks OpenAI policy)",
+		expect(formatVisibleOptions(options, 0, ["hidden", "design"], 2)).toEqual([
+			"  > [x] hidden (👻 ✅)",
+			"    [x] design (📚 Other collection) (👻 ❌ - lacks OpenAI policy)",
 		]);
 	});
 

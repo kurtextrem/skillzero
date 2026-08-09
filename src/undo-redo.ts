@@ -1,17 +1,10 @@
-import { readFile, rm } from "node:fs/promises";
-import path from "node:path";
-
-import { collectionConfigPath, collectionDirectoryPath, collectionsPath } from "./collections.js";
-import { GENERATED_MARKER, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { clearRedoState, readRedoState, writeRedoState } from "./history.js";
 import {
 	applyManagedSkillsPlan,
 	buildManagedSkillsPlan,
 	formatManagedSkillsPlan,
-	readManagedSkillsState,
 } from "./managed-skills.js";
-import { getPathKind, removeEmptyDirectory } from "./fs-utils.js";
 import { EMOJI } from "./ui.js";
 
 import type { RedoState } from "./history.js";
@@ -21,10 +14,6 @@ import type { SkillCollection, SkillInventory } from "./types.js";
 export interface UndoPlan {
 	redoState: RedoState;
 	managedSkillsPlan: ManagedSkillsPlan;
-}
-
-function skillIds(inventory: SkillInventory): string[] {
-	return inventory.skills.map((skill) => skill.id).sort((left, right) => left.localeCompare(right));
 }
 
 function filterCollections(
@@ -39,23 +28,24 @@ function filterCollections(
 	}));
 }
 
-function hasSkillzeroLayout(inventory: SkillInventory, stateExists: boolean): boolean {
-	return (
-		inventory.collections.length > 0 ||
-		inventory.generatedCollectionIds.length > 0 ||
-		stateExists
-	);
-}
-
 export async function buildUndoPlan(inventory: SkillInventory): Promise<UndoPlan> {
-	const state = await readManagedSkillsState(inventory);
-	if (!hasSkillzeroLayout(inventory, state !== null)) {
+	const state = inventory.state;
+	if (
+		state === null &&
+		inventory.collections.length === 0 &&
+		inventory.generatedCollectionIds.length === 0
+	) {
 		throw new SkillzeroError("No skillzero changes found in " + inventory.rootPath + ".");
 	}
 
+	const visibleIds = new Set(
+		inventory.collections.flatMap((collection) => collection.skillIds),
+	);
 	const redoState: RedoState = {
-		version: 3,
-		managedIds: state?.skills.map((skill) => skill.id) ?? [],
+		version: 1,
+		hiddenIds: (state?.skills ?? [])
+			.map((skill) => skill.id)
+			.filter((id) => !visibleIds.has(id)),
 		collections: inventory.collections,
 	};
 	// Undo deliberately builds an empty collection plan so stale memberships do
@@ -64,6 +54,7 @@ export async function buildUndoPlan(inventory: SkillInventory): Promise<UndoPlan
 		inventory,
 		[],
 		state,
+		[],
 		[],
 	);
 	return { redoState, managedSkillsPlan };
@@ -74,71 +65,26 @@ export async function buildRedoPlan(inventory: SkillInventory): Promise<ManagedS
 	if (state === null) {
 		throw new SkillzeroError("No skillzero undo is waiting to redo in " + inventory.rootPath + ".");
 	}
-	if (await readManagedSkillsState(inventory)) {
+	if (inventory.state !== null) {
 		throw new SkillzeroError("Skills are already configured in " + inventory.rootPath + ".");
 	}
 
-	const availableIds = new Set(skillIds(inventory));
-	const managedIds = state.managedIds.filter((id) => availableIds.has(id));
-	const collections = filterCollections(state.collections, new Set(managedIds));
-	return buildManagedSkillsPlan(inventory, managedIds, null, collections);
-}
-
-async function removeGeneratedFile(filePath: string, label: string): Promise<void> {
-	const kind = await getPathKind(filePath);
-	if (kind === "missing") {
-		return;
-	}
-	if (kind !== "file") {
-		throw new SkillzeroError("Path conflict: generated " + label + " must be a file: " + filePath);
-	}
-
-	const content = await readFile(filePath, "utf8");
-	if (!content.includes(GENERATED_MARKER)) {
-		throw new SkillzeroError("Refusing to remove non-generated " + label + ": " + filePath);
-	}
-	await rm(filePath);
-}
-
-async function removeGeneratedArtifacts(plan: ManagedSkillsPlan): Promise<void> {
-	// Only recognized generated files are removed. Extra user files under the
-	// reserved generated directory intentionally leave that directory in place.
-	const generatedPath = plan.collectionPlan.generatedPath;
-	const generatedCollectionIds = plan.collectionPlan.generatedCollectionIdsToRemove;
-	for (const collectionId of generatedCollectionIds) {
-		const skillFile = path.join(
-			collectionDirectoryPath(generatedPath, collectionId),
-			SKILL_FILE_NAME,
-		);
-		await removeGeneratedFile(skillFile, "collection skill");
-	}
-
-	const configFile = collectionConfigPath(generatedPath);
-	const configKind = await getPathKind(configFile);
-	if (configKind === "file") {
-		await rm(configFile);
-	} else if (configKind !== "missing") {
-		throw new SkillzeroError("Path conflict: collection config must be a file: " + configFile);
-	}
-
-	for (const collectionId of generatedCollectionIds) {
-		await removeEmptyDirectory(collectionDirectoryPath(generatedPath, collectionId));
-	}
-	await removeEmptyDirectory(collectionsPath(generatedPath));
-	await removeEmptyDirectory(generatedPath);
+	const availableIds = new Set(inventory.skills.map((skill) => skill.id));
+	const hiddenIds = state.hiddenIds.filter((id) => availableIds.has(id));
+	const collections = filterCollections(state.collections, availableIds);
+	return buildManagedSkillsPlan(inventory, hiddenIds, null, collections);
 }
 
 export async function applyUndoPlan(plan: UndoPlan): Promise<void> {
 	// Persist redo metadata before changing files so an interrupted undo still
 	// has a deterministic recovery path.
-	await writeRedoState(path.dirname(plan.managedSkillsPlan.stateFile), plan.redoState);
+	await writeRedoState(plan.managedSkillsPlan.rootPath, plan.redoState);
 	await applyManagedSkillsPlan(plan.managedSkillsPlan);
-	await removeGeneratedArtifacts(plan.managedSkillsPlan);
 }
 
 export async function applyRedoPlan(plan: ManagedSkillsPlan): Promise<void> {
 	await applyManagedSkillsPlan(plan);
-	await clearRedoState(path.dirname(plan.stateFile));
+	await clearRedoState(plan.rootPath);
 }
 
 export function formatUndoPlan(plan: UndoPlan): string {

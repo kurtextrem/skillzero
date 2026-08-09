@@ -7,7 +7,6 @@ import {
 	CODEX_METADATA_DIR_NAME,
 	CODEX_METADATA_FILE_NAME,
 	DISABLE_MODEL_INVOCATION_FIELD,
-	STATE_FILE_NAME,
 } from "./constants.js";
 import {
 	applyCollectionPlan,
@@ -18,35 +17,20 @@ import {
 import { SkillzeroError } from "./errors.js";
 import { getPathKind, removeEmptyDirectory } from "./fs-utils.js";
 import { readOpenAiImplicitInvocation } from "./scanner.js";
+import { skillzeroStatePath } from "./state.js";
 import { estimateSavedTokens } from "./tokens.js";
 import { EMOJI } from "./ui.js";
 
-import type { SkillInventory, SkillRecord } from "./types.js";
-
-type OriginalModelInvocation = boolean | null;
-
-interface FrontmatterState {
-	originalValue: OriginalModelInvocation;
-	appliedContentHash: string;
-}
-
-interface CodexMetadataState {
-	originalContent: string | null;
-	appliedContentHash: string;
-}
-
-interface ManagedSkillState {
-	id: string;
-	// Missing restoration data means the skill author already owned the desired
-	// value. State only records metadata skillzero must be able to put back.
-	frontmatter?: FrontmatterState;
-	codex?: CodexMetadataState;
-}
-
-export interface ManagedSkillsState {
-	version: 3;
-	skills: ManagedSkillState[];
-}
+import type {
+	CodexMetadataState,
+	FrontmatterState,
+	ManagedSkillState,
+	OriginalModelInvocation,
+	SkillCollection,
+	SkillInventory,
+	SkillRecord,
+	SkillzeroState,
+} from "./types.js";
 
 interface MetadataOperationBase {
 	id: string;
@@ -68,114 +52,28 @@ export type MetadataOperation =
 	  });
 
 export interface ManagedSkillsPlan {
+	// Redo survives removal of the generated tree, so callers need the skills
+	// root separately from the active state file nested below it.
+	rootPath: string;
 	stateFile: string;
 	finalManagedSkills: SkillRecord[];
 	finalHiddenSkills: SkillRecord[];
 	operations: MetadataOperation[];
-	nextState: ManagedSkillsState | null;
+	nextState: SkillzeroState | null;
 	stateChanged: boolean;
 	collectionPlan: CollectionPlan;
 }
 
-function statePath(inventory: SkillInventory): string {
-	return path.join(inventory.rootPath, STATE_FILE_NAME);
-}
-
 function codexMetadataPath(skill: SkillRecord): string {
-	return path.join(path.dirname(skill.skillFile), CODEX_METADATA_DIR_NAME, CODEX_METADATA_FILE_NAME);
+	return path.join(
+		path.dirname(skill.skillFile),
+		CODEX_METADATA_DIR_NAME,
+		CODEX_METADATA_FILE_NAME,
+	);
 }
 
 function contentHash(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function isFrontmatterState(value: unknown): value is FrontmatterState {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	return (
-		(typeof value["originalValue"] === "boolean" || value["originalValue"] === null) &&
-		typeof value["appliedContentHash"] === "string"
-	);
-}
-
-function isCodexMetadataState(value: unknown): value is CodexMetadataState {
-	if (!isRecord(value)) {
-		return false;
-	}
-
-	return (
-		(typeof value["originalContent"] === "string" || value["originalContent"] === null) &&
-		typeof value["appliedContentHash"] === "string"
-	);
-}
-
-function isManagedSkillState(value: unknown): value is ManagedSkillState {
-	return (
-		isRecord(value) &&
-		typeof value["id"] === "string" &&
-		value["id"].length > 0 &&
-		(value["frontmatter"] === undefined || isFrontmatterState(value["frontmatter"])) &&
-		(value["codex"] === undefined || isCodexMetadataState(value["codex"]))
-	);
-}
-
-function parseManagedSkillsState(content: string, filePath: string): ManagedSkillsState {
-	let value: unknown;
-	try {
-		value = JSON.parse(content);
-	} catch {
-		throw new SkillzeroError(`Invalid skillzero state: ${filePath}`);
-	}
-
-	if (
-		!isRecord(value) ||
-		value["version"] !== 3 ||
-		!Array.isArray(value["skills"])
-	) {
-		throw new SkillzeroError(`Invalid skillzero state: ${filePath}`);
-	}
-
-	const skills: ManagedSkillState[] = [];
-	const ids = new Set<string>();
-	for (const storedSkill of value["skills"]) {
-		if (!isManagedSkillState(storedSkill) || ids.has(storedSkill.id)) {
-			throw new SkillzeroError(`Invalid skillzero state: ${filePath}`);
-		}
-
-		ids.add(storedSkill.id);
-		const skill: ManagedSkillState = { id: storedSkill.id };
-		if (storedSkill.frontmatter) {
-			skill.frontmatter = { ...storedSkill.frontmatter };
-		}
-		if (storedSkill.codex) {
-			skill.codex = { ...storedSkill.codex };
-		}
-		skills.push(skill);
-	}
-
-	skills.sort((left, right) => left.id.localeCompare(right.id));
-	return { version: 3, skills };
-}
-
-export async function readManagedSkillsState(
-	inventory: SkillInventory,
-): Promise<ManagedSkillsState | null> {
-	const filePath = statePath(inventory);
-	const kind = await getPathKind(filePath);
-	if (kind === "missing") {
-		return null;
-	}
-	if (kind !== "file") {
-		throw new SkillzeroError(`Skillzero state must be a file: ${filePath}`);
-	}
-
-	return parseManagedSkillsState(await readFile(filePath, "utf8"), filePath);
 }
 
 function readDisableModelInvocation(content: string, skillFile: string): OriginalModelInvocation {
@@ -306,7 +204,9 @@ function withCodexImplicitInvocationDisabled(content: string, filePath: string):
 		return `${lines.join(lineEnding)}${hasTrailingNewline ? lineEnding : ""}`;
 	}
 
-	const inlinePolicyIndex = lines.findIndex((line) => /^policy:[ \t]*\{.*\}[ \t]*(?:#.*)?$/.test(line));
+	const inlinePolicyIndex = lines.findIndex((line) =>
+		/^policy:[ \t]*\{.*\}[ \t]*(?:#.*)?$/.test(line),
+	);
 	if (inlinePolicyIndex !== -1) {
 		const line = lines[inlinePolicyIndex] ?? "";
 		if (/allow_implicit_invocation[ \t]*:/.test(line)) {
@@ -324,30 +224,39 @@ function withCodexImplicitInvocationDisabled(content: string, filePath: string):
 		throw new SkillzeroError(`Unsupported Codex skill metadata policy layout: ${filePath}`);
 	}
 
-	const prefix = content.length === 0 || content.endsWith("\n") ? content : `${content}${lineEnding}`;
+	const prefix =
+		content.length === 0 || content.endsWith("\n") ? content : `${content}${lineEnding}`;
 	return `${prefix}policy:${lineEnding}  allow_implicit_invocation: false${lineEnding}`;
 }
 
-function stateById(state: ManagedSkillsState | null): Map<string, ManagedSkillState> {
+function stateById(state: SkillzeroState | null): Map<string, ManagedSkillState> {
 	return new Map(state?.skills.map((skill) => [skill.id, skill]));
 }
 
 function sortedState(
 	skills: ManagedSkillState[],
-): ManagedSkillsState | null {
-	if (skills.length === 0) {
+	knownIds: Iterable<string>,
+	collections: SkillCollection[],
+): SkillzeroState | null {
+	const knownIdSet = new Set(knownIds);
+	for (const skill of skills) {
+		knownIdSet.add(skill.id);
+	}
+	if (skills.length === 0 && knownIdSet.size === 0 && collections.length === 0) {
 		return null;
 	}
 
 	return {
-		version: 3,
+		version: 1,
+		knownIds: [...knownIdSet].sort((left, right) => left.localeCompare(right)),
 		skills: skills.sort((left, right) => left.id.localeCompare(right.id)),
+		collections,
 	};
 }
 
 function statesDiffer(
-	previousState: ManagedSkillsState | null,
-	nextState: ManagedSkillsState | null,
+	previousState: SkillzeroState | null,
+	nextState: SkillzeroState | null,
 ): boolean {
 	// State is part of the applied layout. Normalized JSON comparison keeps a
 	// no-op sync from requesting confirmation or rewriting metadata.
@@ -356,17 +265,26 @@ function statesDiffer(
 
 export async function buildManagedSkillsPlan(
 	inventory: SkillInventory,
-	managedIds: Iterable<string>,
-	previousState: ManagedSkillsState | null,
+	hiddenIds: Iterable<string>,
+	previousState: SkillzeroState | null,
 	collections = inventory.collections,
+	nextKnownIds: Iterable<string> = inventory.skills.map((skill) => skill.id),
 ): Promise<ManagedSkillsPlan> {
-	const managedIdSet = new Set(managedIds);
+	// Hidden selection and collection membership are the only two ownership
+	// inputs in v1. Derive their union here so callers cannot confuse discovery
+	// with management.
+	const managedIdSet = new Set(hiddenIds);
+	for (const collection of collections) {
+		for (const skillId of collection.skillIds) {
+			managedIdSet.add(skillId);
+		}
+	}
 	const skillsById = new Map(inventory.skills.map((skill) => [skill.id, skill]));
 	const unknownIds = [...managedIdSet]
 		.filter((id) => !skillsById.has(id))
 		.sort((left, right) => left.localeCompare(right));
 	if (unknownIds.length > 0) {
-		throw new SkillzeroError(`Unknown selected skill names: ${unknownIds.join(", ")}`);
+		throw new SkillzeroError(`Unknown managed skill names: ${unknownIds.join(", ")}`);
 	}
 
 	const previousById = stateById(previousState);
@@ -382,9 +300,7 @@ export async function buildManagedSkillsPlan(
 		let frontmatterState: FrontmatterState | undefined;
 		if (currentFrontmatterValue === true) {
 			frontmatterState =
-				previous?.frontmatter?.appliedContentHash === skillHash
-					? previous.frontmatter
-					: undefined;
+				previous?.frontmatter?.appliedContentHash === skillHash ? previous.frontmatter : undefined;
 		} else {
 			const updatedContent = withDisableModelInvocation(skillContent, true);
 			operations.push({
@@ -412,10 +328,7 @@ export async function buildManagedSkillsPlan(
 			codexContent === null ? null : readOpenAiImplicitInvocation(codexContent, codexFile);
 		let codexState: CodexMetadataState | undefined;
 		if (currentCodexValue === false) {
-			codexState =
-				previous?.codex?.appliedContentHash === codexHash
-					? previous.codex
-					: undefined;
+			codexState = previous?.codex?.appliedContentHash === codexHash ? previous.codex : undefined;
 		} else {
 			const updatedContent = withCodexImplicitInvocationDisabled(codexContent ?? "", codexFile);
 			operations.push({
@@ -500,9 +413,10 @@ export async function buildManagedSkillsPlan(
 		collectionPlan.finalCollections.flatMap((collection) => collection.skillIds),
 	);
 	const finalHiddenSkills = finalManagedSkills.filter((skill) => !collectionSkillIds.has(skill.id));
-	const nextState = sortedState(nextSkills);
+	const nextState = sortedState(nextSkills, nextKnownIds, collectionPlan.finalCollections);
 	return {
-		stateFile: statePath(inventory),
+		rootPath: inventory.rootPath,
+		stateFile: skillzeroStatePath(inventory.generatedPath),
 		finalManagedSkills,
 		finalHiddenSkills,
 		operations,
@@ -513,10 +427,7 @@ export async function buildManagedSkillsPlan(
 }
 
 export function formatManagedSkillsPlan(plan: ManagedSkillsPlan): string {
-	const lines = [
-		`${EMOJI.plan} Planned changes:`,
-		`- ${EMOJI.keep}  Keep selected skill folders in place.`,
-	];
+	const lines = [`${EMOJI.plan} Planned changes:`];
 
 	for (const operation of plan.operations) {
 		const verb =
@@ -525,40 +436,44 @@ export function formatManagedSkillsPlan(plan: ManagedSkillsPlan): string {
 				: operation.expectedContentHash === null
 					? `Add ${operation.label}`
 					: `Update ${operation.label}`;
-		lines.push(`- ${operation.kind === "remove" ? EMOJI.unlock : EMOJI.lock}  ${verb}: ${operation.id}`);
+		lines.push(
+			`- ${operation.kind === "remove" ? EMOJI.unlock : EMOJI.lock} ${verb}: ${operation.id}`,
+		);
 	}
 
 	if (plan.finalHiddenSkills.length > 0) {
-		lines.push(
-			`- ${EMOJI.ghost} Keep ${plan.finalHiddenSkills.length} skill(s) hidden.`,
-		);
+		lines.push(`- ${EMOJI.ghost} Keep ${plan.finalHiddenSkills.length} skill(s) hidden.`);
 	}
 	lines.push(formatCollectionPlan(plan.collectionPlan));
 	lines.push(
-		`- ${EMOJI.new} Skillzero now saves ${estimateSavedTokens(plan.finalManagedSkills)} tokens for you.`,
+		`- ${EMOJI.new} Skillzero now saves ${estimateSavedTokens(plan.finalManagedSkills, plan.collectionPlan.finalCollections)} tokens for you.`,
 	);
 	return lines.join("\n");
 }
 
-export async function applyManagedSkillsPlan(
-	plan: ManagedSkillsPlan,
-): Promise<void> {
+export async function applyManagedSkillsPlan(plan: ManagedSkillsPlan): Promise<void> {
 	// Validate the complete preview before writing so edits made at the
 	// confirmation prompt cannot produce a partially applied metadata set.
 	for (const operation of plan.operations) {
 		const kind = await getPathKind(operation.filePath);
 		if (operation.expectedContentHash === null) {
 			if (kind !== "missing") {
-				throw new SkillzeroError(`Metadata changed while waiting for confirmation: ${operation.filePath}`);
+				throw new SkillzeroError(
+					`Metadata changed while waiting for confirmation: ${operation.filePath}`,
+				);
 			}
 			continue;
 		}
 		if (kind !== "file") {
-			throw new SkillzeroError(`Metadata changed while waiting for confirmation: ${operation.filePath}`);
+			throw new SkillzeroError(
+				`Metadata changed while waiting for confirmation: ${operation.filePath}`,
+			);
 		}
 		const content = await readFile(operation.filePath, "utf8");
 		if (contentHash(content) !== operation.expectedContentHash) {
-			throw new SkillzeroError(`Metadata changed while waiting for confirmation: ${operation.filePath}`);
+			throw new SkillzeroError(
+				`Metadata changed while waiting for confirmation: ${operation.filePath}`,
+			);
 		}
 	}
 
@@ -582,8 +497,10 @@ export async function applyManagedSkillsPlan(
 
 	if (plan.nextState === null) {
 		await rm(plan.stateFile, { force: true });
+		await removeEmptyDirectory(path.dirname(plan.stateFile));
 		return;
 	}
 
+	await mkdir(path.dirname(plan.stateFile), { recursive: true });
 	await writeFile(plan.stateFile, `${JSON.stringify(plan.nextState, null, 2)}\n`, "utf8");
 }

@@ -1,10 +1,8 @@
 export const CLI_NAME = "skillzero";
 export const CLI_VERSION = "1.0.0";
 export const GENERATED_DIR_NAME = "skillzero";
-export const COLLECTIONS_DIR_NAME = "collections";
-export const COLLECTION_CONFIG_FILE_NAME = "collections.json";
 export const SKILL_FILE_NAME = "SKILL.md";
-export const STATE_FILE_NAME = ".skillzero-state.json";
+export const STATE_FILE_NAME = "state.json";
 export const REDO_STATE_FILE_NAME = ".skillzero-redo.json";
 export const DISABLE_MODEL_INVOCATION_FIELD = "disable-model-invocation";
 export const CODEX_METADATA_DIR_NAME = "agents";

@@ -16,7 +16,6 @@ export const EMOJI = {
 	// Use a stable two-cell emoji here; some terminals render the text/emoji
 	// presentation of ℹ️ at one cell while Clack reserves two.
 	info: "💡",
-	index: "📝",
 	link: "🔗",
 	lock: "🔒",
 	managed: "📦",
@@ -28,7 +27,6 @@ export const EMOJI = {
 	redo: "↪",
 	restore: "↩",
 	success: "✅",
-	keep: "📌",
 	unlock: "🔓",
 	update: "🔄",
 	// Avoid emoji presentation: terminal and Clack width calculations can
@@ -95,7 +93,8 @@ export function printBanner(): void {
 
 	// A small, static banner establishes hierarchy without adding startup delay or terminal animation.
 	console.log();
-	console.log(`   ${accent("◆")} ${bold(text(CLI_NAME))} ${dim(`v${CLI_VERSION}`)}`);
-	console.log(`     ${dim("Keep skill context light. Keep every skill reachable.")}`);
+	console.log(
+		`   ${accent("◆")} ${bold(text(CLI_NAME))} ${dim(`v${CLI_VERSION}`)} - https://github.com/kurtextrem/skillzero`,
+	);
 	console.log();
 }

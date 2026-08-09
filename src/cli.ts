@@ -708,7 +708,7 @@ function compactSkillDescription(id: string, description: string): string {
 	return `${normalized.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`;
 }
 
-async function promptForManagedSkills(
+function promptForManagedSkills(
 	inventory: SkillInventory,
 	message: string,
 	initialIds = inventory.managedSkills.map((skill) => skill.id),
@@ -731,18 +731,12 @@ async function promptForManagedSkills(
 		};
 	});
 
-	const selectedResult = await promptVisibleMultiselect({
+	return promptVisibleMultiselect({
 		message,
 		options,
 		initialValues: initialIds,
 		required: false,
 	});
-
-	if (selectedResult.status === "cancelled") {
-		return selectedResult;
-	}
-
-	return selectedResult;
 }
 
 function selectionHintForSkill(
@@ -987,6 +981,38 @@ function logOperationRoot(inventory: SkillInventory, count: number): void {
 	}
 }
 
+async function runAcrossInventories(
+	options: CliOptions,
+	runForInventory: (inventory: SkillInventory) => Promise<number>,
+): Promise<number> {
+	// Every mutating command must resolve and validate roots in exactly the same
+	// way. Keep that lifecycle here so a new command cannot accidentally skip
+	// alias reporting, duplicate-file protection, or early exit propagation.
+	const inventoryResult = await resolveSkillInventories(options, true);
+	if (inventoryResult.status === "cancelled") {
+		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
+		return 130;
+	}
+
+	if (inventoryResult.inventories.length === 0) {
+		console.log(
+			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
+		);
+		return 0;
+	}
+
+	logDiscoveredAliases(inventoryResult.discoveredRoots);
+	for (const inventory of inventoryResult.inventories) {
+		logOperationRoot(inventory, inventoryResult.inventories.length);
+		const exitCode = await runForInventory(inventory);
+		if (exitCode !== 0) {
+			return exitCode;
+		}
+	}
+
+	return 0;
+}
+
 export async function runScan(options: CliOptions): Promise<number> {
 	const inventoryResult = await resolveSkillInventories(options, false);
 	if (inventoryResult.status === "cancelled") {
@@ -1118,29 +1144,9 @@ async function runConfigureForInventory(
 }
 
 export async function runConfigure(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runConfigureForInventory(options, inventory);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) =>
+		runConfigureForInventory(options, inventory),
+	);
 }
 
 async function runCollectionsForInventory(
@@ -1248,29 +1254,9 @@ async function runCollectionsForInventory(
 }
 
 export async function runCollections(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runCollectionsForInventory(options, inventory);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) =>
+		runCollectionsForInventory(options, inventory),
+	);
 }
 
 function formatHandoffPlan(plan: Awaited<ReturnType<typeof buildMovePlan>>): string {
@@ -1361,29 +1347,7 @@ async function runManageForInventory(
 }
 
 export async function runManage(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runManageForInventory(options, inventory);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) => runManageForInventory(options, inventory));
 }
 
 function readForwardedUpdateArgs(argv: readonly string[]): string[] {
@@ -1426,7 +1390,7 @@ function readForwardedUpdateArgs(argv: readonly string[]): string[] {
 	return forwardedArgs;
 }
 
-function runSkillsUpdate(forwardedArgs: readonly string[] = []): number {
+function runSkillsUpdate(forwardedArgs: readonly string[] = []): void {
 	p.note("Refreshing installed skills through the skills CLI.", `${EMOJI.update} Updating skills`);
 	const result = spawnSync("skills", ["update", ...forwardedArgs], {
 		stdio: "inherit",
@@ -1439,7 +1403,6 @@ function runSkillsUpdate(forwardedArgs: readonly string[] = []): number {
 			`skills update exited with status ${result.status ?? "unknown"}. Run skillzero when it is ready.`,
 		);
 	}
-	return 0;
 }
 
 export async function runUpdate(
@@ -1664,29 +1627,9 @@ export async function runSync(
 	options: CliOptions,
 	behavior: SyncBehavior = DEFAULT_SYNC_BEHAVIOR,
 ): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runSyncForInventory(options, inventory, behavior);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) =>
+		runSyncForInventory(options, inventory, behavior),
+	);
 }
 
 async function runUndoForInventory(
@@ -1710,29 +1653,7 @@ async function runUndoForInventory(
 }
 
 export async function runUndo(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ` + inventoryResult.projectPath + ".",
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runUndoForInventory(options, inventory);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) => runUndoForInventory(options, inventory));
 }
 
 async function runRedoForInventory(
@@ -1757,29 +1678,7 @@ async function runRedoForInventory(
 }
 
 export async function runRedo(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ` + inventoryResult.projectPath + ".",
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runRedoForInventory(options, inventory);
-		if (exitCode !== 0) {
-			return exitCode;
-		}
-	}
-
-	return 0;
+	return runAcrossInventories(options, (inventory) => runRedoForInventory(options, inventory));
 }
 
 function readPositionalScope(options: CliOptions, argument: string): CliOptions {
@@ -1906,7 +1805,7 @@ export async function runCli(argv: string[]): Promise<number> {
 
 		if (cli.args.length === 1) {
 			printBanner();
-			const options = await readPositionalScope(readCliOptions(cli.options), cli.args[0] ?? "");
+			const options = readPositionalScope(readCliOptions(cli.options), cli.args[0] ?? "");
 			return await runDefault(options);
 		}
 

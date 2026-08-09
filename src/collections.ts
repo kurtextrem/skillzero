@@ -295,11 +295,21 @@ export async function buildCollectionPlan(
 	}
 
 	finalCollections.sort((left, right) => left.id.localeCompare(right.id));
+	const normalizedCollections = finalCollections.map(normalizeCollection);
+	// Plans carry the exact bytes they validate. Applying a confirmed plan must
+	// not rerun rendering against domain records that a caller could mutate.
+	const collectionConfigContent = `${JSON.stringify({ version: 1, collections: normalizedCollections }, null, 2)}\n`;
+	const collectionSkillFiles = normalizedCollections.map((collection) => ({
+		path: collectionSkillFilePath(inventory.indexSkillPath, collection.id),
+		content: generateCollectionSkill(collection, finalManagedSkills, inventory.indexSkillPath),
+	}));
 	const plan: CollectionPlan = {
 		indexSkillPath: inventory.indexSkillPath,
 		collectionsPath: collectionsPath(inventory.indexSkillPath),
 		collectionConfigFile: collectionConfigPath(inventory.indexSkillPath),
-		finalCollections: finalCollections.map(normalizeCollection),
+		collectionConfigContent,
+		collectionSkillFiles,
+		finalCollections: normalizedCollections,
 		generatedCollectionIdsToRemove: inventory.generatedCollectionIds
 			.filter((id) => !collectionIds.has(id))
 			.sort((left, right) => left.localeCompare(right)),
@@ -309,18 +319,12 @@ export async function buildCollectionPlan(
 	await validateCollectionDestinations(plan);
 	let collectionsChanged = await hasDifferentFileContent(
 		plan.collectionConfigFile,
-		`${JSON.stringify({ version: 1, collections: plan.finalCollections }, null, 2)}\n`,
+		plan.collectionConfigContent,
 	);
 
 	if (!collectionsChanged) {
-		for (const collection of plan.finalCollections) {
-			const skillFile = collectionSkillFilePath(plan.indexSkillPath, collection.id);
-			if (
-				await hasDifferentFileContent(
-					skillFile,
-					generateCollectionSkill(collection, finalManagedSkills, plan.indexSkillPath),
-				)
-			) {
+		for (const file of plan.collectionSkillFiles) {
+			if (await hasDifferentFileContent(file.path, file.content)) {
 				collectionsChanged = true;
 				break;
 			}
@@ -400,21 +404,12 @@ export function formatCollectionPlan(plan: CollectionPlan): string {
 	return lines.join("\n");
 }
 
-export async function applyCollectionPlan(
-	plan: CollectionPlan,
-	finalManagedSkills: SkillRecord[],
-): Promise<void> {
+export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
 	await mkdir(plan.collectionsPath, { recursive: true });
 
-	for (const collection of plan.finalCollections) {
-		const directory = collectionDirectoryPath(plan.indexSkillPath, collection.id);
-		await mkdir(directory, { recursive: true });
-		const skillFile = collectionSkillFilePath(plan.indexSkillPath, collection.id);
-		await writeFile(
-			skillFile,
-			generateCollectionSkill(collection, finalManagedSkills, plan.indexSkillPath),
-			"utf8",
-		);
+	for (const file of plan.collectionSkillFiles) {
+		await mkdir(path.dirname(file.path), { recursive: true });
+		await writeFile(file.path, file.content, "utf8");
 	}
 
 	for (const collectionId of plan.generatedCollectionIdsToRemove) {
@@ -436,7 +431,7 @@ export async function applyCollectionPlan(
 
 	await writeFile(
 		plan.collectionConfigFile,
-		`${JSON.stringify({ version: 1, collections: plan.finalCollections }, null, 2)}\n`,
+		plan.collectionConfigContent,
 		"utf8",
 	);
 }

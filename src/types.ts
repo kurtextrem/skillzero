@@ -31,6 +31,8 @@ export interface CollectionPlan {
 	indexSkillPath: string;
 	collectionsPath: string;
 	collectionConfigFile: string;
+	collectionConfigContent: string;
+	collectionSkillFiles: { path: string; content: string }[];
 	finalCollections: SkillCollection[];
 	generatedCollectionIdsToRemove: string[];
 	collectionsChanged: boolean;
@@ -64,9 +66,9 @@ export interface MoveOperation {
 }
 
 export interface MovePlan {
-	rootPath: string;
 	indexSkillPath: string;
 	indexSkillFile: string;
+	indexContent: string;
 	managedSkillsPath: string;
 	operations: MoveOperation[];
 	finalManagedSkills: SkillRecord[];

@@ -141,9 +141,11 @@ export async function buildMovePlan(
 	const indexContent = generateIndexSkill(finalManagedSkills, inventory.indexSkillPath);
 
 	return {
-		rootPath: inventory.rootPath,
 		indexSkillPath: inventory.indexSkillPath,
 		indexSkillFile: inventory.indexSkillFile,
+		// Keep the validated content on the plan so applying it cannot silently
+		// regenerate a different index after the preview and change checks.
+		indexContent,
 		managedSkillsPath: inventory.managedSkillsPath,
 		operations,
 		finalManagedSkills,

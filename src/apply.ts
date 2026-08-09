@@ -2,8 +2,6 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { applyCollectionPlan } from "./collections.js";
-import { generateIndexSkill } from "./index-skill.js";
-
 import type { MovePlan } from "./types.js";
 
 export async function applyMoveOperations(plan: MovePlan): Promise<void> {
@@ -36,13 +34,12 @@ export async function applyMovePlan(plan: MovePlan): Promise<void> {
 	await applyMoveOperations(plan);
 
 	await mkdir(plan.indexSkillPath, { recursive: true });
-	// Collection files are generated routing manifests. Write them before the
-	// outer index so the new index never points at an intentionally missing
-	// collection after a successful apply.
-	await applyCollectionPlan(plan.collectionPlan, plan.finalManagedSkills);
+	// Finish nested generated files before publishing the outer index so readers
+	// never observe a partially applied layout after a successful operation.
+	await applyCollectionPlan(plan.collectionPlan);
 	await writeFile(
 		plan.indexSkillFile,
-		generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath),
+		plan.indexContent,
 		"utf8",
 	);
 }

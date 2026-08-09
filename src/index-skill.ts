@@ -12,8 +12,13 @@ function relativeSkillPath(indexSkillPath: string, skill: SkillRecord): string {
 	return path.relative(indexSkillPath, skill.skillFile).split(path.sep).join("/");
 }
 
-export function generateIndexSkill(skills: SkillRecord[], indexSkillPath: string): string {
-	const sortedSkills = skills.sort((left, right) => left.id.localeCompare(right.id));
+export function generateIndexSkill(
+	skills: readonly SkillRecord[],
+	indexSkillPath: string,
+): string {
+	// Rendering must not reorder the caller's domain records. Plans own their
+	// ordering, while this module only owns the emitted representation.
+	const sortedSkills = [...skills].sort((left, right) => left.id.localeCompare(right.id));
 	const skillRows = sortedSkills.map((skill) => {
 		const skillPath = relativeSkillPath(indexSkillPath, skill);
 		return `| \`${markdownTableCell(skill.id)}\` | ${markdownTableCell(skill.description)} | \`${skillPath}\` |`;

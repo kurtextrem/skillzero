@@ -22,13 +22,15 @@ describe("generateIndexSkill", () => {
 	it("renders a generated skill with a managed skills table", () => {
 		const rootPath = "/tmp/project/.codex/skills";
 		const indexPath = path.join(rootPath, "skill-index");
-		const content = generateIndexSkill(
-			[
-				managedSkill(rootPath, "api-builder", "Build | review API contracts."),
-				managedSkill(rootPath, "ui-polish", "Improve UI quality."),
-			],
-			indexPath,
-		);
+		const skills = [
+			managedSkill(rootPath, "ui-polish", "Improve UI quality."),
+			managedSkill(rootPath, "api-builder", "Build | review API contracts."),
+		];
+		const content = generateIndexSkill(skills, indexPath);
+
+		// Rendering sorts its output for stability without changing the domain
+		// order owned by the plan that supplied these records.
+		expect(skills.map((skill) => skill.id)).toEqual(["ui-polish", "api-builder"]);
 
 		expect(content).toMatchInlineSnapshot(`
 			"---

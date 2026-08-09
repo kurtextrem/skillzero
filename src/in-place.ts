@@ -41,6 +41,7 @@ export interface InPlaceOperation {
 export interface InPlacePlan {
 	indexSkillPath: string;
 	indexSkillFile: string;
+	indexContent: string;
 	finalManagedSkills: SkillRecord[];
 	operations: InPlaceOperation[];
 	nextState: InPlaceState | null;
@@ -335,6 +336,8 @@ export async function buildInPlacePlan(
 	return {
 		indexSkillPath: inventory.indexSkillPath,
 		indexSkillFile: inventory.indexSkillFile,
+		// Preserve the exact index representation that was checked before preview.
+		indexContent,
 		finalManagedSkills,
 		operations,
 		nextState,
@@ -391,10 +394,10 @@ export async function applyInPlacePlan(
 	}
 
 	await mkdir(plan.indexSkillPath, { recursive: true });
-	await applyCollectionPlan(plan.collectionPlan, plan.finalManagedSkills);
+	await applyCollectionPlan(plan.collectionPlan);
 	await writeFile(
 		plan.indexSkillFile,
-		generateIndexSkill(plan.finalManagedSkills, plan.indexSkillPath),
+		plan.indexContent,
 		"utf8",
 	);
 

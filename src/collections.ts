@@ -11,11 +11,20 @@ import { SkillzeroError } from "./errors.js";
 import { getPathKind, hasDifferentFileContent } from "./fs-utils.js";
 import { EMOJI } from "./ui.js";
 
-import type { CollectionPlan, SkillCollection, SkillInventory, SkillRecord } from "./types.js";
+import type { SkillCollection, SkillInventory, SkillRecord } from "./types.js";
 
-export interface CollectionConfig {
+interface CollectionConfig {
 	version: 1;
 	collections: SkillCollection[];
+}
+
+export interface CollectionPlan {
+	generatedPath: string;
+	collectionConfigContent: string;
+	collectionSkillFiles: { path: string; content: string }[];
+	finalCollections: SkillCollection[];
+	generatedCollectionIdsToRemove: string[];
+	collectionsChanged: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,11 +48,26 @@ function normalizeText(value: string): string {
 	return value.replace(/\s+/g, " ").trim();
 }
 
+const COLLECTION_DESCRIPTION_PREFIX = "Use when ";
+
+// Keep collection frontmatter canonical while letting the editor work with
+// only the user-authored completion after "Use when".
+export function collectionDescriptionInput(description: string): string {
+	const normalized = normalizeText(description);
+	return normalized.startsWith(COLLECTION_DESCRIPTION_PREFIX)
+		? normalized.slice(COLLECTION_DESCRIPTION_PREFIX.length)
+		: normalized;
+}
+
+export function formatCollectionDescription(input: string): string {
+	return `${COLLECTION_DESCRIPTION_PREFIX}${collectionDescriptionInput(input)}`;
+}
+
 function normalizeCollection(collection: SkillCollection): SkillCollection {
 	return {
 		id: collection.id,
 		title: normalizeText(collection.title),
-		description: normalizeText(collection.description),
+		description: formatCollectionDescription(collection.description),
 		skillIds: [...collection.skillIds].sort((left, right) => left.localeCompare(right)),
 	};
 }
@@ -109,20 +133,20 @@ function parseCollectionConfig(content: string, filePath: string): CollectionCon
 	return { version: 1, collections: collections.map(normalizeCollection) };
 }
 
-export function collectionsPath(indexSkillPath: string): string {
-	return path.join(indexSkillPath, COLLECTIONS_DIR_NAME);
+export function collectionsPath(generatedPath: string): string {
+	return path.join(generatedPath, COLLECTIONS_DIR_NAME);
 }
 
-export function collectionConfigPath(indexSkillPath: string): string {
-	return path.join(indexSkillPath, COLLECTION_CONFIG_FILE_NAME);
+export function collectionConfigPath(generatedPath: string): string {
+	return path.join(generatedPath, COLLECTION_CONFIG_FILE_NAME);
 }
 
-export function collectionDirectoryPath(indexSkillPath: string, collectionId: string): string {
-	return path.join(collectionsPath(indexSkillPath), collectionId);
+export function collectionDirectoryPath(generatedPath: string, collectionId: string): string {
+	return path.join(collectionsPath(generatedPath), collectionId);
 }
 
-export function collectionSkillFilePath(indexSkillPath: string, collectionId: string): string {
-	return path.join(collectionDirectoryPath(indexSkillPath, collectionId), SKILL_FILE_NAME);
+function collectionSkillFilePath(generatedPath: string, collectionId: string): string {
+	return path.join(collectionDirectoryPath(generatedPath, collectionId), SKILL_FILE_NAME);
 }
 
 export function collectionIdFromTitle(title: string): string {
@@ -135,10 +159,10 @@ export function collectionIdFromTitle(title: string): string {
 	return id.length > 0 ? id : "collection";
 }
 
-export async function readCollectionConfig(indexSkillPath: string): Promise<CollectionConfig> {
+export async function readCollectionConfig(generatedPath: string): Promise<CollectionConfig> {
 	// Keep collection membership in a small machine-owned file so generated
 	// routing skills can be rebuilt after a skill update without editing them.
-	const filePath = collectionConfigPath(indexSkillPath);
+	const filePath = collectionConfigPath(generatedPath);
 	const kind = await getPathKind(filePath);
 	if (kind === "missing") {
 		return { version: 1, collections: [] };
@@ -151,17 +175,17 @@ export async function readCollectionConfig(indexSkillPath: string): Promise<Coll
 }
 
 async function validateConfiguredCollectionFiles(
-	indexSkillPath: string,
+	generatedPath: string,
 	collections: SkillCollection[],
 ): Promise<void> {
 	for (const collection of collections) {
-		const directory = collectionDirectoryPath(indexSkillPath, collection.id);
+		const directory = collectionDirectoryPath(generatedPath, collection.id);
 		const directoryKind = await getPathKind(directory);
 		if (directoryKind !== "missing" && directoryKind !== "directory") {
 			throw new SkillzeroError(`Path conflict: ${directory} must be a directory.`);
 		}
 
-		const skillFile = collectionSkillFilePath(indexSkillPath, collection.id);
+		const skillFile = collectionSkillFilePath(generatedPath, collection.id);
 		const skillFileKind = await getPathKind(skillFile);
 		if (skillFileKind !== "missing" && skillFileKind !== "file") {
 			throw new SkillzeroError(`Path conflict: ${skillFile} must be a file.`);
@@ -179,14 +203,14 @@ async function validateConfiguredCollectionFiles(
 }
 
 export async function scanGeneratedCollectionIds(
-	indexSkillPath: string,
+	generatedPath: string,
 	configuredCollections: SkillCollection[],
 ): Promise<string[]> {
 	// Stale generated collection files are safe to remove later; any user-authored
 	// SKILL.md in this reserved tree must stop the run before a write occurs.
-	await validateConfiguredCollectionFiles(indexSkillPath, configuredCollections);
+	await validateConfiguredCollectionFiles(generatedPath, configuredCollections);
 
-	const rootPath = collectionsPath(indexSkillPath);
+	const rootPath = collectionsPath(generatedPath);
 	const rootKind = await getPathKind(rootPath);
 	if (rootKind === "missing") {
 		return [];
@@ -229,19 +253,15 @@ export async function scanGeneratedCollectionIds(
 	return generatedIds;
 }
 
-function allInventorySkills(inventory: SkillInventory): SkillRecord[] {
-	return [...inventory.activeSkills, ...inventory.managedSkills];
-}
-
 async function validateCollectionDestinations(plan: CollectionPlan): Promise<void> {
 	for (const collection of plan.finalCollections) {
-		const directory = collectionDirectoryPath(plan.indexSkillPath, collection.id);
+		const directory = collectionDirectoryPath(plan.generatedPath, collection.id);
 		const directoryKind = await getPathKind(directory);
 		if (directoryKind !== "missing" && directoryKind !== "directory") {
 			throw new SkillzeroError(`Path conflict: ${directory} must be a directory.`);
 		}
 
-		const skillFile = collectionSkillFilePath(plan.indexSkillPath, collection.id);
+		const skillFile = collectionSkillFilePath(plan.generatedPath, collection.id);
 		const skillFileKind = await getPathKind(skillFile);
 		if (skillFileKind !== "missing" && skillFileKind !== "file") {
 			throw new SkillzeroError(`Path conflict: ${skillFile} must be a file.`);
@@ -263,9 +283,8 @@ export async function buildCollectionPlan(
 	finalManagedSkills: SkillRecord[],
 	collections = inventory.collections,
 ): Promise<CollectionPlan> {
-	// A collection only describes the final non-top-level set. Restored skills are
-	// removed from its assignment list while the collection itself remains editable.
-	const knownIds = new Set(allInventorySkills(inventory).map((skill) => skill.id));
+	// A collection can only reference skills whose metadata skillzero owns.
+	const knownIds = new Set(inventory.skills.map((skill) => skill.id));
 	const finalManagedIds = new Set(finalManagedSkills.map((skill) => skill.id));
 	const collectionIds = new Set<string>();
 	const finalCollections: SkillCollection[] = [];
@@ -300,13 +319,12 @@ export async function buildCollectionPlan(
 	// not rerun rendering against domain records that a caller could mutate.
 	const collectionConfigContent = `${JSON.stringify({ version: 1, collections: normalizedCollections }, null, 2)}\n`;
 	const collectionSkillFiles = normalizedCollections.map((collection) => ({
-		path: collectionSkillFilePath(inventory.indexSkillPath, collection.id),
-		content: generateCollectionSkill(collection, finalManagedSkills, inventory.indexSkillPath),
+		path: collectionSkillFilePath(inventory.generatedPath, collection.id),
+		content: generateCollectionSkill(collection, finalManagedSkills, inventory.generatedPath),
 	}));
+	const configFile = collectionConfigPath(inventory.generatedPath);
 	const plan: CollectionPlan = {
-		indexSkillPath: inventory.indexSkillPath,
-		collectionsPath: collectionsPath(inventory.indexSkillPath),
-		collectionConfigFile: collectionConfigPath(inventory.indexSkillPath),
+		generatedPath: inventory.generatedPath,
 		collectionConfigContent,
 		collectionSkillFiles,
 		finalCollections: normalizedCollections,
@@ -318,7 +336,7 @@ export async function buildCollectionPlan(
 
 	await validateCollectionDestinations(plan);
 	let collectionsChanged = await hasDifferentFileContent(
-		plan.collectionConfigFile,
+		configFile,
 		plan.collectionConfigContent,
 	);
 
@@ -344,32 +362,32 @@ function markdownTableCell(value: string): string {
 
 function relativeSkillPath(
 	collection: SkillCollection,
-	indexSkillPath: string,
+	generatedPath: string,
 	skill: SkillRecord,
 ): string {
 	return path
-		.relative(collectionDirectoryPath(indexSkillPath, collection.id), skill.skillFile)
+		.relative(collectionDirectoryPath(generatedPath, collection.id), skill.skillFile)
 		.split(path.sep)
 		.join("/");
 }
 
-export function generateCollectionSkill(
+function generateCollectionSkill(
 	collection: SkillCollection,
 	skills: SkillRecord[],
-	indexSkillPath: string,
+	generatedPath: string,
 ): string {
 	const collectionSkillIds = new Set(collection.skillIds);
 	const rows = skills
 		.filter((skill) => collectionSkillIds.has(skill.id))
 		.sort((left, right) => left.id.localeCompare(right.id))
 		.map((skill) => {
-			const sourcePath = relativeSkillPath(collection, indexSkillPath, skill);
+			const sourcePath = relativeSkillPath(collection, generatedPath, skill);
 			return `| \`${markdownTableCell(skill.id)}\` | ${markdownTableCell(skill.description)} | \`${sourcePath}\` |`;
 		});
 	const tableRows =
 		rows.length > 0
 			? rows.join("\n")
-			: "| _No skills assigned_ | Assign managed skills to this collection. | _None_ |";
+			: "| _No skills assigned_ | Assign skills to this collection. | _None_ |";
 
 	return `---
 name: ${collection.id}
@@ -395,7 +413,7 @@ export function formatCollectionPlan(plan: CollectionPlan): string {
 	];
 	for (const collection of plan.finalCollections) {
 		lines.push(
-			`- ${EMOJI.collection} Collection ${collection.title}: ${collection.skillIds.length} managed skill(s).`,
+			`- ${EMOJI.collection} Collection ${collection.title}: ${collection.skillIds.length} skill(s).`,
 		);
 	}
 	for (const id of plan.generatedCollectionIdsToRemove) {
@@ -405,7 +423,7 @@ export function formatCollectionPlan(plan: CollectionPlan): string {
 }
 
 export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
-	await mkdir(plan.collectionsPath, { recursive: true });
+	await mkdir(collectionsPath(plan.generatedPath), { recursive: true });
 
 	for (const file of plan.collectionSkillFiles) {
 		await mkdir(path.dirname(file.path), { recursive: true });
@@ -413,7 +431,7 @@ export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
 	}
 
 	for (const collectionId of plan.generatedCollectionIdsToRemove) {
-		const skillFile = collectionSkillFilePath(plan.indexSkillPath, collectionId);
+		const skillFile = collectionSkillFilePath(plan.generatedPath, collectionId);
 		const kind = await getPathKind(skillFile);
 		if (kind === "missing") {
 			continue;
@@ -430,7 +448,7 @@ export async function applyCollectionPlan(plan: CollectionPlan): Promise<void> {
 	}
 
 	await writeFile(
-		plan.collectionConfigFile,
+		collectionConfigPath(plan.generatedPath),
 		plan.collectionConfigContent,
 		"utf8",
 	);

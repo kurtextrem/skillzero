@@ -1,9 +1,11 @@
-import { access, constants, mkdir, symlink } from "node:fs/promises";
+import { access, constants, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runCli } from "../src/cli.js";
-import { createTempRoot, writeManagedSkill, writeSkill } from "./helpers.js";
+import { applyManagedSkillsPlan, buildManagedSkillsPlan } from "../src/managed-skills.js";
+import { scanSkills } from "../src/scanner.js";
+import { createTempRoot, writeSkill } from "./helpers.js";
 
 interface CapturedRun {
 	code: number;
@@ -56,6 +58,14 @@ async function captureRunFrom(cwd: string, args: string[]): Promise<CapturedRun>
 	}
 }
 
+async function configureManagedSkill(rootPath: string, name: string, content: string): Promise<void> {
+	await writeSkill(rootPath, name, content);
+	const inventory = await scanSkills(rootPath);
+	await applyManagedSkillsPlan(
+		await buildManagedSkillsPlan(inventory, { indexIds: [name], hideIds: [] }, null),
+	);
+}
+
 describe("runCli", () => {
 	it("returns cleanly for root help without entering the default flow", async () => {
 		const result = await captureRun(["--help"]);
@@ -72,30 +82,21 @@ describe("runCli", () => {
 		expect(result.code).toBe(0);
 	});
 
-	it("rejects selecting more than one harness target", async () => {
-		const rootPath = await createTempRoot();
-
-		const result = await captureRun([rootPath, "--claude", "--codex"]);
-
-		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("Choose exactly one target");
-	});
-
-	it("syncs moved skills from every discovered Codex root", async () => {
+	it("syncs managed metadata from every discovered root", async () => {
 		const projectPath = await createTempRoot();
 		const agentsRoot = path.join(projectPath, ".agents", "skills");
 		const codexRoot = path.join(projectPath, ".codex", "skills");
-		await writeManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
-		await writeManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
+		await configureManagedSkill(agentsRoot, "shared-skill", "---\ndescription: Shared skill.\n---\n");
+		await configureManagedSkill(codexRoot, "codex-only", "---\ndescription: Codex-only skill.\n---\n");
 
-		const result = await captureRun([projectPath, "--codex", "--yes"]);
+		const result = await captureRun([projectPath, "--yes"]);
 
 		expect(result.code).toBe(0);
 		await expect(
-			exists(path.join(agentsRoot, "skill-index", "skills", "shared-skill", "_SKILL.md")),
+			exists(path.join(agentsRoot, "shared-skill", "agents", "openai.yaml")),
 		).resolves.toBe(true);
 		await expect(
-			exists(path.join(codexRoot, "skill-index", "skills", "codex-only", "_SKILL.md")),
+			exists(path.join(codexRoot, "codex-only", "agents", "openai.yaml")),
 		).resolves.toBe(true);
 	});
 
@@ -113,23 +114,56 @@ describe("runCli", () => {
 		await symlink(sourceSkillPath, path.join(agentsRoot, "linked-skill"), "dir");
 		await symlink(sourceSkillPath, path.join(codexRoot, "linked-skill"), "dir");
 
-		const result = await captureRun([projectPath, "--codex", "--yes"]);
+		const result = await captureRun([projectPath, "--yes"]);
 
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain("same SKILL.md file is linked in multiple roots");
 	});
 
-	it("syncs an existing positional skills root without a handoff file", async () => {
+	it("syncs an existing positional skills root", async () => {
 		const rootPath = await createTempRoot();
-		await writeManagedSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
+		await configureManagedSkill(rootPath, "ui-polish", "---\ndescription: Improve UI quality.\n---\n");
 
 		const result = await captureRun([rootPath, "--yes"]);
 
 		expect(result.code).toBe(0);
 		await expect(exists(path.join(rootPath, "skill-index", "SKILL.md"))).resolves.toBe(true);
 		await expect(
-			exists(path.join(rootPath, "skill-index", "skills", "ui-polish", "_SKILL.md")),
+			exists(path.join(rootPath, "ui-polish", "agents", "openai.yaml")),
 		).resolves.toBe(true);
+	});
+
+	it("removes stale collection memberships during an approved sync", async () => {
+		const rootPath = await createTempRoot();
+		await configureManagedSkill(rootPath, "docs", "---\ndescription: Write docs.\n---\n");
+		const collectionConfigFile = path.join(rootPath, "skill-index", "collections.json");
+		await writeFile(
+			collectionConfigFile,
+			`${JSON.stringify(
+				{
+					version: 1,
+					collections: [
+						{
+							id: "deslop",
+							title: "Deslop",
+							description: "Improve text.",
+							skillIds: ["docs", "removed-skill"],
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const result = await captureRun([rootPath, "--yes"]);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(JSON.parse(await readFile(collectionConfigFile, "utf8"))).toMatchObject({
+			collections: [{ id: "deslop", skillIds: ["docs"] }],
+		});
 	});
 
 	it("runs collections as an explicit command", async () => {
@@ -139,7 +173,7 @@ describe("runCli", () => {
 		const result = await captureRunFrom(rootPath, ["collections", "--dry-run"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("No non-top-level skills or collections found");
+		expect(result.stdout).toContain("No indexed skills or collections found");
 	});
 
 	it("reports missing paths", async () => {

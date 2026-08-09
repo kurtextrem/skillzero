@@ -2,7 +2,7 @@
 
 ## V2: Searchable Skill Index
 
-V1 intentionally stays deterministic: it moves selected skills under `skill-index/skills`, generates a compact `skill-index/SKILL.md`, and relies on the agent to choose from the generated table.
+V1 intentionally stays deterministic: it marks selected skills as explicit-only in their existing folders, generates a compact `skill-index/SKILL.md`, and relies on the agent to choose from the generated table.
 
 A future v2 could borrow the shape of Chrome's Modern Web Guidance project: keep one small router skill in context, but make the CLI responsible for finding and retrieving the best hidden content.
 
@@ -10,7 +10,7 @@ A future v2 could borrow the shape of Chrome's Modern Web Guidance project: keep
 
 - Large skill sets can still make the generated table too long.
 - Agents may choose the wrong skill from name and description alone.
-- Users may want to query managed skills without moving files around again.
+- Users may want to query managed skills without scanning every source file on each request.
 - The index skill can tell agents to call a CLI, but the CLI does not yet expose a retrieval workflow.
 
 ## Candidate V2 Commands

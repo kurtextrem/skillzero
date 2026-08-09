@@ -7,15 +7,11 @@ import { getPathKind } from "./fs-utils.js";
 
 import type { SkillCollection } from "./types.js";
 
-export type RedoStrategy = "move" | "in-place";
-
-// The index directory is removed by undo, so this small root-level snapshot is
+// The generated directory is removed by undo, so this small root-level snapshot is
 // the durable source for the one redo operation we support.
 export interface RedoState {
-	version: 1;
-	strategy: RedoStrategy;
+	version: 3;
 	managedIds: string[];
-	knownSkillIds: string[];
 	collections: SkillCollection[];
 }
 
@@ -65,40 +61,28 @@ function parseRedoState(content: string, filePath: string): RedoState {
 		throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
 	}
 
-	if (!isRecord(value) || value["version"] !== 1) {
+	if (!isRecord(value) || value["version"] !== 3) {
 		throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
 	}
 
-	const strategy = value["strategy"];
 	const storedManagedIds = value["managedIds"];
-	const storedKnownSkillIds = value["knownSkillIds"];
 	const storedCollections = value["collections"];
-	if (
-		(strategy !== "move" && strategy !== "in-place") ||
-		!Array.isArray(storedManagedIds) ||
-		!Array.isArray(storedKnownSkillIds) ||
-		!Array.isArray(storedCollections)
-	) {
+	if (!Array.isArray(storedManagedIds) || !Array.isArray(storedCollections)) {
 		throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
 	}
 
-	const knownSkillIds: string[] = [];
-	for (const storedKnownSkillId of storedKnownSkillIds) {
-		const knownSkillId = readNonEmptyString(storedKnownSkillId);
-		if (knownSkillId === null || knownSkillIds.includes(knownSkillId)) {
-			throw new SkillzeroError(`Invalid redo state: ${filePath}`);
+	const parseIds = (storedIds: unknown[]): string[] => {
+		const ids: string[] = [];
+		for (const storedId of storedIds) {
+			const id = readNonEmptyString(storedId);
+			if (id === null || ids.includes(id)) {
+				throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
+			}
+			ids.push(id);
 		}
-		knownSkillIds.push(knownSkillId);
-	}
-
-	const managedIds: string[] = [];
-	for (const storedManagedId of storedManagedIds) {
-		const managedId = readNonEmptyString(storedManagedId);
-		if (managedId === null || managedIds.includes(managedId)) {
-			throw new SkillzeroError(`Invalid skillzero redo state: ${filePath}`);
-		}
-		managedIds.push(managedId);
-	}
+		return ids;
+	};
+	const managedIds = parseIds(storedManagedIds);
 
 	const collectionIds = new Set<string>();
 	const collections: SkillCollection[] = [];
@@ -112,12 +96,11 @@ function parseRedoState(content: string, filePath: string): RedoState {
 	}
 
 	managedIds.sort((left, right) => left.localeCompare(right));
-	knownSkillIds.sort((left, right) => left.localeCompare(right));
 	collections.sort((left, right) => left.id.localeCompare(right.id));
-	return { version: 1, strategy, managedIds, knownSkillIds, collections };
+	return { version: 3, managedIds, collections };
 }
 
-export function redoStatePath(rootPath: string): string {
+function redoStatePath(rootPath: string): string {
 	return path.join(rootPath, REDO_STATE_FILE_NAME);
 }
 
@@ -136,12 +119,8 @@ export async function readRedoState(rootPath: string): Promise<RedoState | null>
 
 export async function writeRedoState(rootPath: string, state: RedoState): Promise<void> {
 	const normalized: RedoState = {
-		version: 1,
-		strategy: state.strategy,
+		version: 3,
 		managedIds: [...new Set(state.managedIds)].sort((left, right) => left.localeCompare(right)),
-		knownSkillIds: [...new Set(state.knownSkillIds)].sort((left, right) =>
-			left.localeCompare(right),
-		),
 		collections: state.collections
 			.map((collection) => ({
 				id: collection.id,

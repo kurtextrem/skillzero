@@ -8,6 +8,7 @@ export interface VisibleMultiselectOption {
 	value: string;
 	label: string;
 	hint?: string;
+	annotation?: string;
 	description?: string;
 	source?: string;
 }
@@ -31,6 +32,7 @@ function matchesSearch(search: string, option: VisibleMultiselectOption): boolea
 	return (
 		option.label.toLowerCase().includes(normalizedSearch) ||
 		option.hint?.toLowerCase().includes(normalizedSearch) === true ||
+		option.annotation?.toLowerCase().includes(normalizedSearch) === true ||
 		option.description?.toLowerCase().includes(normalizedSearch) === true ||
 		option.value.toLowerCase().includes(normalizedSearch)
 	);
@@ -45,11 +47,13 @@ function formatOption(
 	const checkbox = selectedValues.includes(option.value) ? "[x]" : "[ ]";
 	const label = active ? bold(option.label) : dim(option.label);
 	const hideSelectedStateHint =
-		selectedValues.includes(option.value) &&
-		(option.hint === "managed" || option.hint === "manual-only");
+		selectedValues.includes(option.value) && option.hint === "managed";
 	const hint = option.hint && !hideSelectedStateHint ? ` ${dim(`(${option.hint})`)}` : "";
+	// Keep persistent skill metadata separate from transient selection hints so
+	// it remains visible after a row is selected and never relies on color alone.
+	const annotation = option.annotation ? ` ${dim(`(${option.annotation})`)}` : "";
 
-	return `${pointer} ${checkbox} ${label}${hint}`;
+	return `${pointer} ${checkbox} ${label}${hint}${annotation}`;
 }
 
 export function formatSourceLink(source: string): string {

@@ -5,17 +5,18 @@ import { readFile, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { applyMovePlan } from "./apply.js";
-import { collectionIdFromTitle } from "./collections.js";
+import {
+	collectionDescriptionInput,
+	collectionIdFromTitle,
+	formatCollectionDescription,
+} from "./collections.js";
 import {
 	CLI_NAME,
 	CLI_VERSION,
 	GENERATED_MARKER,
-	HANDOFF_STATE_FILE_NAME,
-	IN_PLACE_STATE_FILE_NAME,
-	KNOWN_SKILLS_STATE_FILE_NAME,
 	REDO_STATE_FILE_NAME,
 	SKILL_FILE_NAME,
+	STATE_FILE_NAME,
 } from "./constants.js";
 import {
 	discoverGlobalSkillsRoots,
@@ -24,15 +25,15 @@ import {
 } from "./discovery.js";
 import { SkillzeroError } from "./errors.js";
 import { clearRedoState, readRedoState } from "./history.js";
-import { applyHandoff, applySync, clearHandoffState, readHandoffState } from "./handoff.js";
 import {
-	applyInPlacePlan,
-	buildInPlacePlan,
-	formatInPlacePlan,
-	readInPlaceState,
-} from "./in-place.js";
-import { readKnownSkillIds, writeKnownSkillIds } from "./known-skills.js";
-import { buildMovePlan, formatMovePlan } from "./plan.js";
+	applyManagedSkillsPlan,
+	buildManagedSkillsPlan,
+	formatManagedSkillsPlan,
+	readManagedSkillsState,
+	selectionFromManagedSkillsState,
+	type ManagedSkillSelection,
+	type ManagedSkillsPlan,
+} from "./managed-skills.js";
 import { scanSkills } from "./scanner.js";
 import { getPathKind } from "./fs-utils.js";
 import { promptVisibleMultiselect } from "./multiselect.js";
@@ -45,11 +46,11 @@ import {
 	formatRedoPlan,
 	formatUndoPlan,
 } from "./undo-redo.js";
-import { bold, dim, EMOJI, printBanner, success, text, warning } from "./ui.js";
+import { bold, dim, EMOJI, printBanner } from "./ui.js";
 
 import type {
 	DiscoveredSkillsRoot,
-	InvocationTarget,
+	ManagedSkillMode,
 	SkillCollection,
 	SkillInventory,
 	SkillRecord,
@@ -59,8 +60,6 @@ interface CliOptions {
 	scope: string | null;
 	dryRun: boolean;
 	yes: boolean;
-	target: InvocationTarget | null;
-	strategy: "move" | "in-place" | null;
 }
 
 type PromptRootsResult =
@@ -99,27 +98,17 @@ type PromptCollectionDetailsResult =
 
 interface SyncBehavior {
 	ignoreMissingSkills: boolean;
-	skipUnconfiguredInPlace: boolean;
+	skipUnconfigured: boolean;
 	autoApply: boolean;
 }
 
 const DEFAULT_SYNC_BEHAVIOR: SyncBehavior = {
 	ignoreMissingSkills: false,
-	skipUnconfiguredInPlace: false,
+	skipUnconfigured: false,
 	autoApply: false,
 };
 
-const UPDATE_WRAPPER_BOOLEAN_OPTIONS = new Set([
-	"--dry-run",
-	"--yes",
-	"--claude",
-	"--cursor",
-	"--codex",
-	"--copilot",
-	"--gemini",
-	"--help",
-	"--version",
-]);
+const UPDATE_WRAPPER_BOOLEAN_OPTIONS = new Set(["--dry-run", "--yes", "--help", "--version"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -133,49 +122,12 @@ function readOption(options: unknown, key: string): unknown {
 	return options[key];
 }
 
-function readInvocationTarget(options: unknown): InvocationTarget | null {
-	const targets: InvocationTarget[] = [];
-	if (readOption(options, "claude") === true) {
-		targets.push("claude");
-	}
-	if (readOption(options, "cursor") === true) {
-		targets.push("cursor");
-	}
-	if (readOption(options, "codex") === true) {
-		targets.push("codex");
-	}
-	if (readOption(options, "copilot") === true) {
-		targets.push("copilot");
-	}
-	if (readOption(options, "gemini") === true) {
-		targets.push("gemini");
-	}
-
-	if (targets.length > 1) {
-		throw new SkillzeroError(
-			"Choose exactly one target: --claude, --cursor, --codex, --copilot, or --gemini.",
-		);
-	}
-
-	return targets[0] ?? null;
-}
-
 function readCliOptions(options: unknown, scope: string | null = null): CliOptions {
 	return {
 		scope,
 		dryRun: readOption(options, "dryRun") === true,
 		yes: readOption(options, "yes") === true,
-		target: readInvocationTarget(options),
-		strategy: null,
 	};
-}
-
-function usesInPlaceStrategy(options: CliOptions): boolean {
-	// A shared .agents root has one filesystem layout, so these flags are aliases
-	// for the same in-place strategy rather than separate per-harness settings.
-	return (
-		options.strategy === "in-place" || options.target === "claude" || options.target === "cursor"
-	);
 }
 
 async function isLikelySkillsRoot(scopePath: string): Promise<boolean> {
@@ -242,8 +194,8 @@ function mergeRootCandidates(
 }
 
 async function isSkillzeroManagedRoot(rootPath: string): Promise<boolean> {
-	// State artifacts still identify a managed root while an update handoff has
-	// temporarily removed the generated index file.
+	// State artifacts identify a managed root even if its generated index was
+	// removed manually or by an interrupted undo.
 	const generatedIndexFile = path.join(rootPath, "skill-index", SKILL_FILE_NAME);
 	if ((await getPathKind(generatedIndexFile)) === "file") {
 		if ((await readFile(generatedIndexFile, "utf8")).includes(GENERATED_MARKER)) {
@@ -252,10 +204,8 @@ async function isSkillzeroManagedRoot(rootPath: string): Promise<boolean> {
 	}
 
 	const stateFiles = [
-		path.join(rootPath, IN_PLACE_STATE_FILE_NAME),
-		path.join(rootPath, KNOWN_SKILLS_STATE_FILE_NAME),
+		path.join(rootPath, STATE_FILE_NAME),
 		path.join(rootPath, REDO_STATE_FILE_NAME),
-		path.join(rootPath, "skill-index", HANDOFF_STATE_FILE_NAME),
 	];
 	for (const stateFile of stateFiles) {
 		if ((await getPathKind(stateFile)) === "file") {
@@ -268,7 +218,7 @@ async function isSkillzeroManagedRoot(rootPath: string): Promise<boolean> {
 
 async function rootHasSkills(rootPath: string): Promise<boolean> {
 	const inventory = await scanSkills(rootPath);
-	return inventory.activeSkills.length > 0 || inventory.managedSkills.length > 0;
+	return inventory.skills.length > 0;
 }
 
 function displayRootPath(candidate: RootCandidate): string {
@@ -297,26 +247,12 @@ function displayRootPath(candidate: RootCandidate): string {
 }
 
 async function rootSavings(inventory: SkillInventory): Promise<number> {
-	if (inventory.managedSkills.length > 0) {
-		return estimateSavedTokens(inventory.managedSkills);
-	}
-
-	const activeById = new Map(inventory.activeSkills.map((skill) => [skill.id, skill]));
-	const inPlaceState = await readInPlaceState(inventory);
-	if (inPlaceState !== null) {
+	const skillsById = new Map(inventory.skills.map((skill) => [skill.id, skill]));
+	const state = await readManagedSkillsState(inventory);
+	if (state !== null) {
 		return estimateSavedTokens(
-			inPlaceState.skills.flatMap((state) => {
-				const skill = activeById.get(state.id);
-				return skill ? [skill] : [];
-			}),
-		);
-	}
-
-	const handoffState = await readHandoffState(inventory);
-	if (handoffState !== null) {
-		return estimateSavedTokens(
-			handoffState.managedIds.flatMap((id) => {
-				const skill = activeById.get(id);
+			state.skills.flatMap((managedSkill) => {
+				const skill = skillsById.get(managedSkill.id);
 				return skill ? [skill] : [];
 			}),
 		);
@@ -325,8 +261,8 @@ async function rootSavings(inventory: SkillInventory): Promise<number> {
 	const redoState = await readRedoState(inventory.rootPath);
 	if (redoState !== null) {
 		return estimateSavedTokens(
-			redoState.managedIds.flatMap((id) => {
-				const skill = activeById.get(id);
+			[...redoState.indexIds, ...redoState.hideIds].flatMap((id) => {
+				const skill = skillsById.get(id);
 				return skill ? [skill] : [];
 			}),
 		);
@@ -363,9 +299,10 @@ async function rootCandidateSummary(candidates: RootCandidate[]): Promise<string
 	return lines.join("\n");
 }
 
-async function discoverNoPathCandidates(
-	options: CliOptions,
-): Promise<{ candidates: RootCandidate[]; projectPath: string | null }> {
+async function discoverNoPathCandidates(): Promise<{
+	candidates: RootCandidate[];
+	projectPath: string | null;
+}> {
 	// Bare invocation needs a complete candidate list before scanning or writing
 	// so users can review managed roots and opt into other existing roots.
 	const candidates = new Map<string, RootCandidate>();
@@ -387,19 +324,15 @@ async function discoverNoPathCandidates(
 		);
 	}
 
-	mergeRootCandidates(
-		candidates,
-		await discoverSkillsRootsAtPath(process.cwd(), options.target),
-		"project",
-	);
+	mergeRootCandidates(candidates, await discoverSkillsRootsAtPath(process.cwd()), "project");
 
-	const projectRoots = await discoverProjectSkillsRootsAtPath(process.cwd(), options.target);
+	const projectRoots = await discoverProjectSkillsRootsAtPath(process.cwd());
 	if (projectRoots !== null) {
 		projectPath = projectRoots.projectPath;
 		mergeRootCandidates(candidates, projectRoots.roots, "project");
 	}
 
-	mergeRootCandidates(candidates, await discoverGlobalSkillsRoots(options.target), "global");
+	mergeRootCandidates(candidates, await discoverGlobalSkillsRoots(), "global");
 
 	const sortedCandidates = [...candidates.values()];
 	for (const candidate of sortedCandidates) {
@@ -509,10 +442,7 @@ async function promptForRootCandidates(
 	);
 }
 
-async function resolveExplicitScope(
-	scope: string,
-	target: InvocationTarget | null,
-): Promise<PromptRootsResult> {
+async function resolveExplicitScope(scope: string): Promise<PromptRootsResult> {
 	const resolvedScope = path.resolve(scope);
 	const scopeKind = await getPathKind(resolvedScope);
 	if (scopeKind === "missing") {
@@ -538,12 +468,12 @@ async function resolveExplicitScope(
 		);
 	}
 
-	const directRoots = await discoverSkillsRootsAtPath(scope, target);
+	const directRoots = await discoverSkillsRootsAtPath(scope);
 	if (directRoots.length > 0) {
 		return rootsResult(directRoots, null);
 	}
 
-	const projectRoots = await discoverProjectSkillsRootsAtPath(scope, target);
+	const projectRoots = await discoverProjectSkillsRootsAtPath(scope);
 	if (projectRoots !== null) {
 		return rootsResult(projectRoots.roots, projectRoots.projectPath);
 	}
@@ -553,7 +483,7 @@ async function resolveExplicitScope(
 
 async function resolveSkillsRoots(options: CliOptions): Promise<PromptRootsResult> {
 	if (options.scope !== null) {
-		return resolveExplicitScope(options.scope, options.target);
+		return resolveExplicitScope(options.scope);
 	}
 
 	if (!process.stdin.isTTY && (await isLikelySkillsRoot(process.cwd()))) {
@@ -573,7 +503,7 @@ async function resolveSkillsRoots(options: CliOptions): Promise<PromptRootsResul
 		);
 	}
 
-	const { candidates, projectPath } = await discoverNoPathCandidates(options);
+	const { candidates, projectPath } = await discoverNoPathCandidates();
 	if (candidates.length > 0 || process.stdin.isTTY) {
 		return promptForRootCandidates(candidates, projectPath);
 	}
@@ -587,19 +517,14 @@ async function resolveSkillsRoots(options: CliOptions): Promise<PromptRootsResul
 	return { status: "cancelled" };
 }
 
-async function resolveSkillInventories(
-	options: CliOptions,
-	assertDistinct: boolean,
-): Promise<InventoryResolutionResult> {
+async function resolveSkillInventories(options: CliOptions): Promise<InventoryResolutionResult> {
 	const rootsResult = await resolveSkillsRoots(options);
 	if (rootsResult.status === "cancelled") {
 		return rootsResult;
 	}
 
 	const inventories = await Promise.all(rootsResult.paths.map((rootPath) => scanSkills(rootPath)));
-	if (assertDistinct) {
-		await assertDistinctPhysicalSkills(inventories);
-	}
+	await assertDistinctPhysicalSkills(inventories);
 
 	return {
 		status: "ok",
@@ -630,36 +555,52 @@ async function assertDistinctPhysicalSkills(inventories: SkillInventory[]): Prom
 }
 
 function allSkills(inventory: SkillInventory): SkillRecord[] {
-	return [...inventory.activeSkills, ...inventory.managedSkills].sort((left, right) =>
-		left.id.localeCompare(right.id),
-	);
+	return [...inventory.skills].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function inventorySkillIds(inventory: SkillInventory): string[] {
-	return allSkills(inventory).map((skill) => skill.id);
+function hasVisiblePlanChanges(plan: ManagedSkillsPlan): boolean {
+	return plan.operations.length > 0 || plan.indexChanged || plan.collectionPlan.collectionsChanged;
 }
 
-function hasPlanChanges(plan: {
-	operations: readonly unknown[];
-	indexChanged: boolean;
-	collectionPlan: { collectionsChanged: boolean };
-	stateChanged?: boolean;
-}): boolean {
-	return (
-		plan.operations.length > 0 ||
-		plan.indexChanged ||
-		plan.collectionPlan.collectionsChanged ||
-		plan.stateChanged === true
-	);
-}
+async function previewAndApplyManagedPlan(
+	options: CliOptions,
+	plan: ManagedSkillsPlan,
+	successMessage: string,
+	autoApply = false,
+): Promise<number> {
+	p.note(formatManagedSkillsPlan(plan), `Preview`);
+	const hasVisibleChanges = hasVisiblePlanChanges(plan);
+	if (hasVisibleChanges) {
+		if (options.dryRun) {
+			return 0;
+		}
+		if (!autoApply) {
+			const confirmation = await confirmApply(options);
+			if (confirmation !== "apply") {
+				return reportDeclined(confirmation);
+			}
+		}
+	} else if (options.dryRun) {
+		p.outro(`${EMOJI.success} No changes needed.`);
+		return 0;
+	}
 
-function reportNoChanges(): void {
-	p.outro(`${EMOJI.success} No changes needed.`);
+	// State-only changes remember discovery and restoration ownership without
+	// asking users to approve a preview containing no managed file edits.
+	await applyManagedSkillsPlan(plan);
+	await clearRedoState(path.dirname(plan.stateFile));
+	if (!hasVisibleChanges) {
+		p.outro(`${EMOJI.success} No changes needed.`);
+		return 0;
+	}
+
+	p.outro(successMessage);
+	return 0;
 }
 
 function reportNewSkills(inventory: SkillInventory, knownIds: Iterable<string>): string[] {
 	const knownIdSet = new Set(knownIds);
-	const newSkills = inventory.activeSkills.filter((skill) => !knownIdSet.has(skill.id));
+	const newSkills = inventory.skills.filter((skill) => !knownIdSet.has(skill.id));
 	if (newSkills.length === 0) {
 		return [];
 	}
@@ -683,7 +624,7 @@ function shouldPromptForCollections(
 		return false;
 	}
 
-	// New managed skills need an assignment immediately; an existing index with
+	// New indexed skills need an assignment immediately; an existing index with
 	// no collections also needs one interactive chance to create its first route.
 	return (
 		newSkillIds.some((id) => selectedIds.includes(id)) ||
@@ -708,53 +649,133 @@ function compactSkillDescription(id: string, description: string): string {
 	return `${normalized.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`;
 }
 
-function promptForManagedSkills(
+function skillPickerMetadataRank(skill: SkillRecord): number {
+	if (skill.disableModelInvocation && skill.openAiImplicitInvocationDisabled) {
+		return 3;
+	}
+	if (skill.openAiImplicitInvocationDisabled) {
+		return 2;
+	}
+	return skill.disableModelInvocation ? 1 : 0;
+}
+
+function skillPickerOptions(
+	skills: readonly SkillRecord[],
+	stateForSkill: (skill: SkillRecord) => {
+		hint: string | undefined;
+		managed: boolean;
+	},
+) {
+	// Keep explicit-only skills after ordinary choices, but only annotate
+	// author-owned metadata; skillzero-managed rows already explain their state.
+	return [...skills]
+		.sort(
+			(left, right) =>
+				skillPickerMetadataRank(left) - skillPickerMetadataRank(right) ||
+				left.id.localeCompare(right.id),
+		)
+		.map((skill) => {
+			const state = stateForSkill(skill);
+			let annotation: string | undefined;
+			if (!state.managed) {
+				if (skill.disableModelInvocation && skill.openAiImplicitInvocationDisabled) {
+					annotation = `${EMOJI.ghost} ${EMOJI.success}`;
+				} else if (skill.disableModelInvocation) {
+					annotation = `${EMOJI.ghost} ${EMOJI.cancel} - lacks OpenAI policy`;
+				} else if (skill.openAiImplicitInvocationDisabled) {
+					annotation = `${EMOJI.ghost} lacks disable-model-invocation`;
+				}
+			}
+			return {
+				value: skill.id,
+				label: skill.id,
+				...(state.hint === undefined ? {} : { hint: state.hint }),
+				...(annotation === undefined ? {} : { annotation }),
+				description: skill.description,
+				source: skill.skillFile,
+			};
+		});
+}
+
+function promptForSkillMode(
 	inventory: SkillInventory,
 	message: string,
-	initialIds = inventory.managedSkills.map((skill) => skill.id),
-	selectedHint = "managed",
+	selection: ManagedSkillSelection,
+	mode: ManagedSkillMode,
 ): Promise<PromptSelectionResult> {
-	const initiallyManaged = new Set(initialIds);
-	const options = allSkills(inventory).map((skill) => {
-		const hint = selectionHintForSkill(
-			skill,
-			initiallyManaged,
-			inventory.collections,
-			selectedHint,
-		);
-		return {
-			value: skill.id,
-			label: skill.id,
-			...(hint === undefined ? {} : { hint }),
-			description: skill.description,
-			source: skill.skillFile,
-		};
-	});
+	const indexedIds = new Set(selection.indexIds);
+	const hiddenIds = new Set(selection.hideIds);
+	const managedIds = new Set([...indexedIds, ...hiddenIds]);
+	const initialIds = mode === "index" ? selection.indexIds : selection.hideIds;
+	const hiddenHint = `${EMOJI.ghost} hidden`;
+	const options = skillPickerOptions(inventory.skills, (skill) => ({
+		hint:
+			mode === "index"
+				? indexedIds.has(skill.id)
+					? collectionHintForSkill(skill, inventory.collections) ?? "indexed"
+					: hiddenIds.has(skill.id)
+						? hiddenHint
+						: undefined
+				: hiddenIds.has(skill.id)
+					? hiddenHint
+					: indexedIds.has(skill.id)
+						? collectionHintForSkill(skill, inventory.collections) ?? "indexed"
+						: undefined,
+		managed: managedIds.has(skill.id),
+	}));
 
 	return promptVisibleMultiselect({
-		message,
+		message: `${message}\n${dim(`${EMOJI.ghost} hidden skill · ${EMOJI.collection} collection membership`)}`,
 		options,
 		initialValues: initialIds,
 		required: false,
 	});
 }
 
-function selectionHintForSkill(
-	skill: SkillRecord,
-	initiallyManaged: ReadonlySet<string>,
-	collections: SkillCollection[],
-	selectedHint: string,
-): string | undefined {
-	if (!initiallyManaged.has(skill.id)) {
-		return undefined;
-	}
+function availableManagedSelection(
+	inventory: SkillInventory,
+	selection: ManagedSkillSelection,
+): ManagedSkillSelection {
+	const availableIds = new Set(inventory.skills.map((skill) => skill.id));
+	return {
+		indexIds: selection.indexIds.filter((id) => availableIds.has(id)),
+		hideIds: selection.hideIds.filter((id) => availableIds.has(id)),
+	};
+}
 
+function selectionAfterModePrompt(
+	selection: ManagedSkillSelection,
+	mode: ManagedSkillMode,
+	selectedIds: string[],
+): ManagedSkillSelection {
+	const selectedIdSet = new Set(selectedIds);
+	return mode === "index"
+		? {
+				indexIds: selectedIds,
+				hideIds: selection.hideIds.filter((id) => !selectedIdSet.has(id)),
+			}
+		: {
+				indexIds: selection.indexIds.filter((id) => !selectedIdSet.has(id)),
+				hideIds: selectedIds,
+			};
+}
+
+function collectionHintForSkill(
+	skill: SkillRecord,
+	collections: SkillCollection[],
+	excludedCollectionId: string | null = null,
+): string | undefined {
+	// While editing a collection, only show the other memberships; the checkbox
+	// already communicates whether the skill belongs to the current collection.
 	const collectionTitles = collections
-		.filter((collection) => collection.skillIds.includes(skill.id))
+		.filter(
+			(collection) =>
+				collection.id !== excludedCollectionId && collection.skillIds.includes(skill.id),
+		)
 		.map((collection) => collection.title);
 	return collectionTitles.length > 0
 		? `${EMOJI.collection} ${collectionTitles.join(", ")}`
-		: selectedHint;
+		: undefined;
 }
 
 async function promptForCollectionDetails(
@@ -774,10 +795,10 @@ async function promptForCollectionDetails(
 		}
 
 		const description = await p.text({
-			message: "Collection description",
-			initialValue: existing?.description ?? "",
+			message: "Use when:",
+			initialValue: collectionDescriptionInput(existing?.description ?? ""),
 			validate: (value) =>
-				(value ?? "").trim().length > 0 ? undefined : "Enter a collection description.",
+				(value ?? "").trim().length > 0 ? undefined : "Enter when this collection should be used.",
 		});
 		if (p.isCancel(description)) {
 			return { status: "cancelled" };
@@ -799,11 +820,9 @@ async function promptForCollectionDetails(
 		const initialValues = (existing?.skillIds ?? []).filter((skillId) => availableIds.has(skillId));
 		const selectedResult = await promptVisibleMultiselect({
 			message: `Skills in ${title}`,
-			options: skills.map((skill) => ({
-				value: skill.id,
-				label: skill.id,
-				description: skill.description,
-				source: skill.skillFile,
+			options: skillPickerOptions(skills, (skill) => ({
+				hint: collectionHintForSkill(skill, collections, existing?.id ?? null),
+				managed: true,
 			})),
 			initialValues,
 			required: false,
@@ -817,7 +836,7 @@ async function promptForCollectionDetails(
 			collection: {
 				id,
 				title: title.trim(),
-				description: description.trim(),
+				description: formatCollectionDescription(description),
 				skillIds: selectedResult.selectedIds,
 			},
 		};
@@ -840,7 +859,7 @@ async function promptForCollections(
 				{
 					value: "add",
 					label: "Add collection",
-					hint: "Create a title, description, and skill group.",
+					hint: "Create a title, use condition, and skill group.",
 				},
 				...(collections.length > 0
 					? [
@@ -926,45 +945,6 @@ async function promptForCollections(
 	}
 }
 
-function logInventory(inventory: SkillInventory): void {
-	console.log(`${EMOJI.folder} ${bold("Skills directory")} ${dim(inventory.rootPath)}`);
-
-	const sections = [
-		{
-			heading: "Active skills",
-			skills: inventory.activeSkills,
-			marker: success(EMOJI.active),
-		},
-		{
-			heading: "Managed skills",
-			skills: inventory.managedSkills,
-			marker: warning(EMOJI.managed),
-		},
-	];
-
-	for (const section of sections) {
-		console.log();
-		console.log(
-			`${section.heading === "Active skills" ? EMOJI.active : EMOJI.managed} ${bold(section.heading)} ${dim(`(${section.skills.length})`)}`,
-		);
-		for (const skill of section.skills) {
-			const description =
-				skill.description.length > 0 ? ` ${dim("—")} ${dim(skill.description)}` : "";
-			console.log(`   ${section.marker} ${bold(text(skill.id))}${description}`);
-		}
-	}
-
-	console.log();
-	console.log(
-		`${EMOJI.collection} ${bold("Collections")} ${dim(`(${inventory.collections.length})`)}`,
-	);
-	for (const collection of inventory.collections) {
-		console.log(
-			`   ${EMOJI.collection} ${bold(text(collection.title))}${dim(" — ")}${dim(collection.description)}`,
-		);
-	}
-}
-
 function logDiscoveredAliases(discoveredRoots: DiscoveredSkillsRoot[]): void {
 	for (const root of discoveredRoots) {
 		if (root.aliases.length > 1) {
@@ -981,14 +961,88 @@ function logOperationRoot(inventory: SkillInventory, count: number): void {
 	}
 }
 
+type CollectionResolutionResult =
+	| { status: "ok"; inventory: SkillInventory }
+	| { status: "cancelled" }
+	| { status: "declined" };
+
+async function resolveUnknownCollectionSkills(
+	options: CliOptions,
+	inventory: SkillInventory,
+): Promise<CollectionResolutionResult> {
+	const availableIds = new Set(allSkills(inventory).map((skill) => skill.id));
+	let collections = inventory.collections;
+
+	for (const collection of inventory.collections) {
+		const unknownIds = collection.skillIds.filter((skillId) => !availableIds.has(skillId));
+		if (unknownIds.length === 0) {
+			continue;
+		}
+
+		p.note(
+			[
+				`Collection ${collection.title} references unknown skills:`,
+				...unknownIds.map((skillId) => `- ${skillId}`),
+			].join("\n"),
+			`${EMOJI.warning} Collection needs repair`,
+		);
+		if (!options.yes) {
+			const shouldRemove = await p.confirm({
+				message: "Remove from collection?",
+				initialValue: true,
+			});
+			if (p.isCancel(shouldRemove)) {
+				return { status: "cancelled" };
+			}
+			if (!shouldRemove) {
+				return { status: "declined" };
+			}
+		}
+
+		const unknownIdSet = new Set(unknownIds);
+		collections = collections.map((candidate) =>
+			candidate.id === collection.id
+				? {
+						...candidate,
+						skillIds: candidate.skillIds.filter((skillId) => !unknownIdSet.has(skillId)),
+					}
+				: candidate,
+		);
+	}
+
+	return {
+		status: "ok",
+		inventory: collections === inventory.collections ? inventory : { ...inventory, collections },
+	};
+}
+
+async function runWithResolvedCollections(
+	options: CliOptions,
+	inventory: SkillInventory,
+	runForInventory: (resolvedInventory: SkillInventory) => Promise<number>,
+): Promise<number> {
+	const resolution = await resolveUnknownCollectionSkills(options, inventory);
+	if (resolution.status === "cancelled") {
+		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
+		return 130;
+	}
+	if (resolution.status === "declined") {
+		p.cancel(`${EMOJI.warning} No changes applied.`);
+		return 0;
+	}
+
+	return runForInventory(resolution.inventory);
+}
+
 async function runAcrossInventories(
 	options: CliOptions,
 	runForInventory: (inventory: SkillInventory) => Promise<number>,
+	behavior: { resolveStaleCollections?: boolean } = {},
 ): Promise<number> {
 	// Every mutating command must resolve and validate roots in exactly the same
 	// way. Keep that lifecycle here so a new command cannot accidentally skip
 	// alias reporting, duplicate-file protection, or early exit propagation.
-	const inventoryResult = await resolveSkillInventories(options, true);
+	const inventoryResult = await resolveSkillInventories(options);
 	if (inventoryResult.status === "cancelled") {
 		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
 		return 130;
@@ -1004,7 +1058,9 @@ async function runAcrossInventories(
 	logDiscoveredAliases(inventoryResult.discoveredRoots);
 	for (const inventory of inventoryResult.inventories) {
 		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const exitCode = await runForInventory(inventory);
+		const exitCode = behavior.resolveStaleCollections
+			? await runWithResolvedCollections(options, inventory, runForInventory)
+			: await runForInventory(inventory);
 		if (exitCode !== 0) {
 			return exitCode;
 		}
@@ -1013,76 +1069,43 @@ async function runAcrossInventories(
 	return 0;
 }
 
-export async function runScan(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, false);
-	if (inventoryResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	if (inventoryResult.inventories.length === 0) {
-		console.log(
-			`${EMOJI.info} No supported skills directories found in ${inventoryResult.projectPath}.`,
-		);
-		return 0;
-	}
-
-	logDiscoveredAliases(inventoryResult.discoveredRoots);
-	for (const inventory of inventoryResult.inventories) {
-		logInventory(inventory);
-	}
-	return 0;
-}
-
 async function runConfigureForInventory(
 	options: CliOptions,
 	inventory: SkillInventory,
 ): Promise<number> {
-	if (inventory.activeSkills.length === 0 && inventory.managedSkills.length === 0) {
+	if (inventory.skills.length === 0) {
 		console.log(`${EMOJI.info} No skills found in ${inventory.rootPath}.`);
 		return 0;
 	}
 
-	const inPlace = usesInPlaceStrategy(options);
-	if (inPlace && inventory.managedSkills.length > 0) {
-		throw new SkillzeroError(
-			"This skills directory currently uses moved mode. Run skillzero <skills-dir> with --codex, --copilot, or --gemini before switching to --claude or --cursor.",
-		);
-	}
-
-	const inPlaceState = inPlace ? await readInPlaceState(inventory) : null;
-	if (!inPlace && (await readInPlaceState(inventory))) {
-		throw new SkillzeroError(
-			"This skills directory currently uses in-place mode. Deselect its manual-only skills with --claude or --cursor before switching to --codex, --copilot, or --gemini.",
-		);
-	}
-
-	const activeIds = new Set(inventory.activeSkills.map((skill) => skill.id));
-	const initialInPlaceIds = inPlaceState?.skills
-		.map((skill) => skill.id)
-		.filter((id) => activeIds.has(id));
-	const selectionResult = await promptForManagedSkills(
+	const state = await readManagedSkillsState(inventory);
+	const initialSelection = availableManagedSelection(
 		inventory,
-		inPlace
-			? "Select skills to keep in place and make manual-only through skill-index"
-			: "Select skills to manage through skill-index",
-		inPlace ? (initialInPlaceIds ?? []) : undefined,
-		inPlace ? "manual-only" : "managed",
+		selectionFromManagedSkillsState(state),
+	);
+	const selectionResult = await promptForSkillMode(
+		inventory,
+		"Select skills to make explicit-only and manage through skill-index",
+		initialSelection,
+		"index",
 	);
 	if (selectionResult.status === "cancelled") {
 		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
 		return 130;
 	}
 
+	const selection = selectionAfterModePrompt(
+		initialSelection,
+		"index",
+		selectionResult.selectedIds,
+	);
 	let collections = inventory.collections;
-	const initialPlan = inPlace
-		? await buildInPlacePlan(inventory, selectionResult.selectedIds, inPlaceState)
-		: await buildMovePlan(inventory, selectionResult.selectedIds);
-	if (initialPlan.finalManagedSkills.length > 0) {
+	const initialPlan = await buildManagedSkillsPlan(inventory, selection, state);
+	if (initialPlan.finalIndexedSkills.length > 0) {
 		// Initial setup must offer collection routing before the first index is
 		// written; otherwise users have to discover the separate subcommand later.
 		const collectionResult = await promptForCollections(
-			initialPlan.finalManagedSkills,
+			initialPlan.finalIndexedSkills,
 			inventory.collections,
 		);
 		if (collectionResult.status === "cancelled") {
@@ -1092,138 +1115,34 @@ async function runConfigureForInventory(
 		collections = collectionResult.collections;
 	}
 
-	if (inPlace) {
-		const plan = await buildInPlacePlan(
-			inventory,
-			selectionResult.selectedIds,
-			inPlaceState,
-			collections,
-		);
-		p.note(formatInPlacePlan(plan), `Preview`);
-		if (!hasPlanChanges(plan)) {
-			reportNoChanges();
-			return 0;
-		}
-		if (options.dryRun) {
-			return 0;
-		}
-
-		const confirmation = await confirmApply(options);
-		if (confirmation !== "apply") {
-			return reportDeclined(confirmation);
-		}
-
-		await applyInPlacePlan(plan, inventory);
-		await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-		await clearHandoffState(inventory);
-		await clearRedoState(inventory.rootPath);
-		p.outro(`${EMOJI.success} skillzero updated.`);
-		return 0;
-	}
-
-	const plan = await buildMovePlan(inventory, selectionResult.selectedIds, collections);
-	p.note(formatMovePlan(plan), `Preview`);
-	if (!hasPlanChanges(plan)) {
-		reportNoChanges();
-		return 0;
-	}
-	if (options.dryRun) {
-		return 0;
-	}
-
-	const confirmation = await confirmApply(options);
-	if (confirmation !== "apply") {
-		return reportDeclined(confirmation);
-	}
-
-	await applyMovePlan(plan);
-	await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-	await clearRedoState(inventory.rootPath);
-	p.outro(`${EMOJI.success} skillzero updated.`);
-	return 0;
-}
-
-export async function runConfigure(options: CliOptions): Promise<number> {
-	return runAcrossInventories(options, (inventory) =>
-		runConfigureForInventory(options, inventory),
+	const plan = await buildManagedSkillsPlan(
+		inventory,
+		selection,
+		state,
+		collections,
 	);
+	return previewAndApplyManagedPlan(options, plan, `${EMOJI.success} skillzero updated.`);
 }
 
 async function runCollectionsForInventory(
 	options: CliOptions,
 	inventory: SkillInventory,
 ): Promise<number> {
-	const inPlace = usesInPlaceStrategy(options);
-	if (inPlace) {
-		const state = await readInPlaceState(inventory);
-		const availableIds = new Set(inventory.activeSkills.map((skill) => skill.id));
-		const selectedIds = (state?.skills.map((skill) => skill.id) ?? []).filter((id) =>
-			availableIds.has(id),
-		);
-		const initialPlan = await buildInPlacePlan(inventory, selectedIds, state);
-		if (initialPlan.finalManagedSkills.length === 0 && inventory.collections.length === 0) {
-			console.log(
-				`${EMOJI.info} No non-top-level skills or collections found in ${inventory.rootPath}.`,
-			);
-			return 0;
-		}
-
-		const collectionResult = await promptForCollections(
-			initialPlan.finalManagedSkills,
-			inventory.collections,
-		);
-		if (collectionResult.status === "cancelled") {
-			p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-			return 130;
-		}
-
-		const plan = await buildInPlacePlan(
-			inventory,
-			selectedIds,
-			state,
-			collectionResult.collections,
-		);
-		p.note(formatInPlacePlan(plan), `Preview`);
-		if (!hasPlanChanges(plan)) {
-			reportNoChanges();
-			return 0;
-		}
-		if (options.dryRun) {
-			return 0;
-		}
-
-		const confirmation = await confirmApply(options);
-		if (confirmation !== "apply") {
-			return reportDeclined(confirmation);
-		}
-
-		await applyInPlacePlan(plan, inventory);
-		await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-		await clearRedoState(inventory.rootPath);
-		p.outro(`${EMOJI.success} skillzero collections updated.`);
-		return 0;
-	}
-
-	if (await readInPlaceState(inventory)) {
-		throw new SkillzeroError(
-			"This skills directory currently uses in-place mode. Manage collections with --claude or --cursor.",
-		);
-	}
-	if (await readHandoffState(inventory)) {
-		throw new SkillzeroError("Skills are already released. Run sync before editing collections.");
-	}
-
-	const selectedIds = inventory.managedSkills.map((skill) => skill.id);
-	const initialPlan = await buildMovePlan(inventory, selectedIds);
-	if (initialPlan.finalManagedSkills.length === 0 && inventory.collections.length === 0) {
+	const state = await readManagedSkillsState(inventory);
+	const selection = availableManagedSelection(
+		inventory,
+		selectionFromManagedSkillsState(state),
+	);
+	const initialPlan = await buildManagedSkillsPlan(inventory, selection, state);
+	if (initialPlan.finalIndexedSkills.length === 0 && inventory.collections.length === 0) {
 		console.log(
-			`${EMOJI.info} No non-top-level skills or collections found in ${inventory.rootPath}.`,
+			`${EMOJI.info} No indexed skills or collections found in ${inventory.rootPath}.`,
 		);
 		return 0;
 	}
 
 	const collectionResult = await promptForCollections(
-		initialPlan.finalManagedSkills,
+		initialPlan.finalIndexedSkills,
 		inventory.collections,
 	);
 	if (collectionResult.status === "cancelled") {
@@ -1231,46 +1150,71 @@ async function runCollectionsForInventory(
 		return 130;
 	}
 
-	const plan = await buildMovePlan(inventory, selectedIds, collectionResult.collections);
-	p.note(formatMovePlan(plan), `Preview`);
-	if (!hasPlanChanges(plan)) {
-		reportNoChanges();
-		return 0;
-	}
-	if (options.dryRun) {
-		return 0;
-	}
-
-	const confirmation = await confirmApply(options);
-	if (confirmation !== "apply") {
-		return reportDeclined(confirmation);
-	}
-
-	await applyMovePlan(plan);
-	await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-	await clearRedoState(inventory.rootPath);
-	p.outro(`${EMOJI.success} skillzero collections updated.`);
-	return 0;
-}
-
-export async function runCollections(options: CliOptions): Promise<number> {
-	return runAcrossInventories(options, (inventory) =>
-		runCollectionsForInventory(options, inventory),
+	const plan = await buildManagedSkillsPlan(
+		inventory,
+		selection,
+		state,
+		collectionResult.collections,
+	);
+	return previewAndApplyManagedPlan(
+		options,
+		plan,
+		`${EMOJI.success} skillzero collections updated.`,
 	);
 }
 
-function formatHandoffPlan(plan: Awaited<ReturnType<typeof buildMovePlan>>): string {
-	const lines = [`${EMOJI.release} Temporarily release managed skills:`];
-	const restored = plan.operations.filter((operation) => operation.kind === "restore-to-root");
+async function runCollections(options: CliOptions): Promise<number> {
+	return runAcrossInventories(
+		options,
+		(inventory) => runCollectionsForInventory(options, inventory),
+		{ resolveStaleCollections: true },
+	);
+}
 
-	if (restored.length === 0) {
-		lines.push(`- ${EMOJI.info}  No managed skill folders need to move.`);
+async function runHideForInventory(
+	options: CliOptions,
+	inventory: SkillInventory,
+): Promise<number> {
+	if (inventory.skills.length === 0) {
+		console.log(`${EMOJI.info} No skills found in ${inventory.rootPath}.`);
+		return 0;
 	}
-	for (const operation of restored) {
-		lines.push(`- ${EMOJI.restore}  Restore to root: ${operation.id}`);
+
+	const state = await readManagedSkillsState(inventory);
+	const initialSelection = availableManagedSelection(
+		inventory,
+		selectionFromManagedSkillsState(state),
+	);
+	const selectionResult = await promptForSkillMode(
+		inventory,
+		"Select skills to hide from the model and generated indexes",
+		initialSelection,
+		"hide",
+	);
+	if (selectionResult.status === "cancelled") {
+		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
+		return 130;
 	}
-	lines.push(`- ${EMOJI.release}  Remove the generated skill-index router until you run sync.`);
-	return lines.join("\n");
+
+	const selection = selectionAfterModePrompt(
+		initialSelection,
+		"hide",
+		selectionResult.selectedIds,
+	);
+	const plan = await buildManagedSkillsPlan(inventory, selection, state);
+	return previewAndApplyManagedPlan(
+		options,
+		plan,
+		`${EMOJI.success} skillzero hidden skills updated.`,
+	);
+}
+
+async function runHide(options: CliOptions): Promise<number> {
+	return runAcrossInventories(
+		options,
+		(inventory) => runHideForInventory(options, inventory),
+		{ resolveStaleCollections: true },
+	);
 }
 
 async function confirmApply(options: CliOptions): Promise<"apply" | "cancelled" | "declined"> {
@@ -1291,63 +1235,6 @@ async function confirmApply(options: CliOptions): Promise<"apply" | "cancelled" 
 function reportDeclined(result: "cancelled" | "declined"): number {
 	p.cancel(`${EMOJI.warning}  No changes applied.`);
 	return result === "cancelled" ? 130 : 0;
-}
-
-async function runManageForInventory(
-	options: CliOptions,
-	inventory: SkillInventory,
-): Promise<number> {
-	if (usesInPlaceStrategy(options)) {
-		if (inventory.managedSkills.length > 0) {
-			throw new SkillzeroError(
-				"This skills directory has moved skills. Run skillzero update with --codex or --copilot first.",
-			);
-		}
-
-		p.note(
-			"Selected skills already stay in their ordinary folders, so the skills CLI can manage them without a temporary release.",
-			`${EMOJI.info} No release needed`,
-		);
-		if (!options.dryRun) {
-			p.outro(
-				`${EMOJI.success} Skills are ready for the skills CLI. Run skillzero afterwards to restore manual-only metadata.`,
-			);
-		}
-		return 0;
-	}
-
-	if (await readInPlaceState(inventory)) {
-		throw new SkillzeroError(
-			"This skills directory currently uses in-place mode. Deselect its manual-only skills with --claude or --cursor before managing it with --codex or --copilot.",
-		);
-	}
-
-	if (await readHandoffState(inventory)) {
-		throw new SkillzeroError(
-			"Skills are already released. Run your skills command, then run skillzero to sync.",
-		);
-	}
-
-	const plan = await buildMovePlan(inventory, []);
-	p.note(formatHandoffPlan(plan), `Preview`);
-	if (options.dryRun) {
-		return 0;
-	}
-
-	const confirmation = await confirmApply(options);
-	if (confirmation !== "apply") {
-		return reportDeclined(confirmation);
-	}
-
-	await applyHandoff(plan, inventory);
-	p.outro(
-		`${EMOJI.release} Skills released. Run your skills command, then run skillzero to rebuild the index.`,
-	);
-	return 0;
-}
-
-export async function runManage(options: CliOptions): Promise<number> {
-	return runAcrossInventories(options, (inventory) => runManageForInventory(options, inventory));
 }
 
 function readForwardedUpdateArgs(argv: readonly string[]): string[] {
@@ -1405,149 +1292,45 @@ function runSkillsUpdate(forwardedArgs: readonly string[] = []): void {
 	}
 }
 
-export async function runUpdate(
+async function runUpdate(
 	options: CliOptions,
 	forwardedArgs: readonly string[] = [],
 ): Promise<number> {
-	// The handoff state is written before the upstream process starts. If that
-	// process fails, the state deliberately remains so a later sync can recover.
-	const exitCode = await runManage(options);
-	if (exitCode !== 0 || options.dryRun) {
-		return exitCode;
+	if (options.dryRun) {
+		p.note(
+			"Managed skill folders already stay available to the skills CLI.",
+			`${EMOJI.info} No release needed`,
+		);
+		return 0;
 	}
 
 	runSkillsUpdate(forwardedArgs);
 	return runSync(options, {
 		ignoreMissingSkills: true,
-		skipUnconfiguredInPlace: true,
+		skipUnconfigured: true,
 		autoApply: true,
 	});
 }
 
-async function runInPlaceSync(
+async function runManagedSkillsSync(
 	options: CliOptions,
 	inventory: SkillInventory,
 	behavior: SyncBehavior,
 ): Promise<number> {
-	const state = await readInPlaceState(inventory);
+	const state = await readManagedSkillsState(inventory);
 	if (!state) {
-		if (behavior.skipUnconfiguredInPlace) {
+		if (behavior.skipUnconfigured) {
 			// A successful upstream update is a new operation, so it invalidates a
-			// redo snapshot even when there is no in-place state to rebuild.
+			// redo snapshot even when there is no managed state to rebuild.
 			await clearRedoState(inventory.rootPath);
 			return 0;
 		}
-		throw new SkillzeroError(
-			"No in-place skills are waiting to sync. Run skillzero <skills-dir> --claude or --cursor first.",
-		);
-	}
-
-	const availableIds = new Set(inventory.activeSkills.map((skill) => skill.id));
-	const missingIds = state.skills.map((skill) => skill.id).filter((id) => !availableIds.has(id));
-	const knownSkillIds =
-		(await readKnownSkillIds(inventory.rootPath)) ?? state.skills.map((skill) => skill.id);
-	const newSkillIds = reportNewSkills(inventory, knownSkillIds);
-	if (missingIds.length > 0 && !behavior.ignoreMissingSkills && !options.yes) {
-		const shouldForget = await p.confirm({
-			message: `${missingIds.join(", ")} ${missingIds.length === 1 ? "was" : "were"} removed. Forget ${missingIds.length === 1 ? "it" : "them"} from the manual-only set?`,
-			initialValue: true,
-		});
-		if (p.isCancel(shouldForget)) {
-			p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-			return 130;
-		}
-		if (!shouldForget) {
-			p.cancel(`${EMOJI.warning}  No changes applied. Restore the missing skills before syncing.`);
-			return 0;
-		}
-	}
-
-	const retainedIds = state.skills.map((skill) => skill.id).filter((id) => availableIds.has(id));
-	const selectionResult =
-		options.yes || (behavior.autoApply && newSkillIds.length === 0)
-			? { status: "ok" as const, selectedIds: retainedIds }
-			: await promptForManagedSkills(
-					inventory,
-					"Select skills to keep manual-only through skill-index (new skills are visible to the agent until selected)",
-					retainedIds,
-					"manual-only",
-				);
-	if (selectionResult.status === "cancelled") {
-		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-		return 130;
-	}
-
-	let collections = inventory.collections;
-	if (
-		shouldPromptForCollections(
-			options,
-			behavior,
-			inventory,
-			newSkillIds,
-			selectionResult.selectedIds,
-		)
-	) {
-		const initialPlan = await buildInPlacePlan(inventory, selectionResult.selectedIds, state);
-		const collectionResult = await promptForCollections(
-			initialPlan.finalManagedSkills,
-			inventory.collections,
-		);
-		if (collectionResult.status === "cancelled") {
-			p.cancel(`${EMOJI.cancel} Operation cancelled.`);
-			return 130;
-		}
-		collections = collectionResult.collections;
-	}
-
-	const plan = await buildInPlacePlan(inventory, selectionResult.selectedIds, state, collections);
-	p.note(formatInPlacePlan(plan), `Preview`);
-	if (!hasPlanChanges(plan)) {
-		reportNoChanges();
-		return 0;
-	}
-	if (options.dryRun) {
-		return 0;
-	}
-
-	if (!behavior.autoApply) {
-		const confirmation = await confirmApply(options);
-		if (confirmation !== "apply") {
-			return reportDeclined(confirmation);
-		}
-	}
-
-	await applyInPlacePlan(plan, inventory);
-	await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-	await clearRedoState(inventory.rootPath);
-	p.outro(`${EMOJI.success} skillzero index updated.`);
-	return 0;
-}
-
-async function runSyncForInventory(
-	options: CliOptions,
-	inventory: SkillInventory,
-	behavior: SyncBehavior,
-): Promise<number> {
-	if (usesInPlaceStrategy(options)) {
-		return runInPlaceSync(options, inventory, behavior);
-	}
-
-	if (await readInPlaceState(inventory)) {
-		throw new SkillzeroError(
-			"This skills directory currently uses in-place mode. Sync it with --claude or --cursor, or deselect its manual-only skills before using --codex or --copilot.",
-		);
-	}
-
-	const state = await readHandoffState(inventory);
-	const managedIds = state?.managedIds ?? inventory.managedSkills.map((skill) => skill.id);
-	if (state === null && inventory.managedSkills.length === 0) {
 		throw new SkillzeroError("No managed skills are waiting to sync. Run skillzero first.");
 	}
 
-	const availableIds = new Set(allSkills(inventory).map((skill) => skill.id));
-	const missingIds = managedIds.filter((id) => !availableIds.has(id));
-	const knownSkillIds = (await readKnownSkillIds(inventory.rootPath)) ?? managedIds;
-	const newSkillIds = reportNewSkills(inventory, knownSkillIds);
+	const availableIds = new Set(inventory.skills.map((skill) => skill.id));
+	const missingIds = state.skills.map((skill) => skill.id).filter((id) => !availableIds.has(id));
+	const newSkillIds = reportNewSkills(inventory, state.knownSkillIds);
 	if (missingIds.length > 0 && !behavior.ignoreMissingSkills && !options.yes) {
 		const shouldForget = await p.confirm({
 			message: `${missingIds.join(", ")} ${missingIds.length === 1 ? "was" : "were"} removed. Forget ${missingIds.length === 1 ? "it" : "them"} from the managed set?`,
@@ -1563,19 +1346,29 @@ async function runSyncForInventory(
 		}
 	}
 
-	const retainedIds = managedIds.filter((id) => availableIds.has(id));
+	const retainedSelection = availableManagedSelection(
+		inventory,
+		selectionFromManagedSkillsState(state),
+	);
 	const selectionResult =
 		options.yes || (behavior.autoApply && newSkillIds.length === 0)
-			? { status: "ok" as const, selectedIds: retainedIds }
-			: await promptForManagedSkills(
+			? { status: "ok" as const, selectedIds: retainedSelection.indexIds }
+			: await promptForSkillMode(
 					inventory,
-					"Select skills to move into skill-index (new skills are visible to the agent until selected)",
-					retainedIds,
+					"Select skills to keep explicit-only through skill-index (new skills remain implicitly available until selected)",
+					retainedSelection,
+					"index",
 				);
 	if (selectionResult.status === "cancelled") {
 		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
 		return 130;
 	}
+
+	const selection = selectionAfterModePrompt(
+		retainedSelection,
+		"index",
+		selectionResult.selectedIds,
+	);
 
 	let collections = inventory.collections;
 	if (
@@ -1587,9 +1380,9 @@ async function runSyncForInventory(
 			selectionResult.selectedIds,
 		)
 	) {
-		const initialPlan = await buildMovePlan(inventory, selectionResult.selectedIds);
+		const initialPlan = await buildManagedSkillsPlan(inventory, selection, state);
 		const collectionResult = await promptForCollections(
-			initialPlan.finalManagedSkills,
+			initialPlan.finalIndexedSkills,
 			inventory.collections,
 		);
 		if (collectionResult.status === "cancelled") {
@@ -1599,36 +1392,28 @@ async function runSyncForInventory(
 		collections = collectionResult.collections;
 	}
 
-	const plan = await buildMovePlan(inventory, selectionResult.selectedIds, collections);
-	p.note(formatMovePlan(plan), `Preview`);
-	if (!hasPlanChanges(plan)) {
-		reportNoChanges();
-		return 0;
-	}
-	if (options.dryRun) {
-		return 0;
-	}
-
-	if (!behavior.autoApply) {
-		const confirmation = await confirmApply(options);
-		if (confirmation !== "apply") {
-			return reportDeclined(confirmation);
-		}
-	}
-
-	await applySync(plan, inventory);
-	await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
-	await clearRedoState(inventory.rootPath);
-	p.outro(`${EMOJI.success} skillzero index updated.`);
-	return 0;
+	const plan = await buildManagedSkillsPlan(
+		inventory,
+		selection,
+		state,
+		collections,
+	);
+	return previewAndApplyManagedPlan(
+		options,
+		plan,
+		`${EMOJI.success} skillzero index updated.`,
+		behavior.autoApply,
+	);
 }
 
-export async function runSync(
+async function runSync(
 	options: CliOptions,
 	behavior: SyncBehavior = DEFAULT_SYNC_BEHAVIOR,
 ): Promise<number> {
-	return runAcrossInventories(options, (inventory) =>
-		runSyncForInventory(options, inventory, behavior),
+	return runAcrossInventories(
+		options,
+		(inventory) => runManagedSkillsSync(options, inventory, behavior),
+		{ resolveStaleCollections: true },
 	);
 }
 
@@ -1647,12 +1432,12 @@ async function runUndoForInventory(
 		return reportDeclined(confirmation);
 	}
 
-	await applyUndoPlan(plan, inventory);
-	p.outro(`${EMOJI.restore} skillzero changes undone. Run skillzero redo to restore them.`);
+	await applyUndoPlan(plan);
+	p.outro(`${EMOJI.restore}  skillzero changes undone. Run skillzero redo to restore them.`);
 	return 0;
 }
 
-export async function runUndo(options: CliOptions): Promise<number> {
+async function runUndo(options: CliOptions): Promise<number> {
 	return runAcrossInventories(options, (inventory) => runUndoForInventory(options, inventory));
 }
 
@@ -1671,13 +1456,12 @@ async function runRedoForInventory(
 		return reportDeclined(confirmation);
 	}
 
-	await applyRedoPlan(plan, inventory);
-	await writeKnownSkillIds(inventory.rootPath, inventorySkillIds(inventory));
+	await applyRedoPlan(plan);
 	p.outro(`${EMOJI.success} skillzero changes restored.`);
 	return 0;
 }
 
-export async function runRedo(options: CliOptions): Promise<number> {
+async function runRedo(options: CliOptions): Promise<number> {
 	return runAcrossInventories(options, (inventory) => runRedoForInventory(options, inventory));
 }
 
@@ -1690,7 +1474,7 @@ function readPositionalScope(options: CliOptions, argument: string): CliOptions 
 }
 
 async function runDefault(options: CliOptions): Promise<number> {
-	const inventoryResult = await resolveSkillInventories(options, true);
+	const inventoryResult = await resolveSkillInventories(options);
 	if (inventoryResult.status === "cancelled") {
 		p.cancel(`${EMOJI.cancel} Operation cancelled.`);
 		return 130;
@@ -1701,40 +1485,19 @@ async function runDefault(options: CliOptions): Promise<number> {
 		return 0;
 	}
 
-	const inPlaceStates = new Map<string, boolean>();
-	const moveStates = new Map<string, boolean>();
-	let hasInPlaceState = false;
-	let hasMoveState = false;
+	const configuredRoots = new Map<string, boolean>();
 	for (const inventory of inventoryResult.inventories) {
-		const inPlaceState = await readInPlaceState(inventory);
-		const handoffState = await readHandoffState(inventory);
-		inPlaceStates.set(inventory.rootPath, inPlaceState !== null);
-		moveStates.set(inventory.rootPath, handoffState !== null || inventory.managedSkills.length > 0);
-		hasInPlaceState ||= inPlaceState !== null;
-		hasMoveState ||= handoffState !== null || inventory.managedSkills.length > 0;
+		configuredRoots.set(inventory.rootPath, (await readManagedSkillsState(inventory)) !== null);
 	}
 
-	if (hasInPlaceState && hasMoveState) {
-		throw new SkillzeroError(
-			"Discovered skills directories use mixed layouts. Run skillzero with one path at a time to sync them safely.",
-		);
-	}
-
-	const resolvedOptions: CliOptions = {
-		...options,
-		// An explicit harness flag is authoritative. Bare invocation is the only
-		// mode that infers the existing layout from state and nested managed skills.
-		strategy: options.target === null ? (hasInPlaceState ? "in-place" : "move") : null,
-	};
 	logDiscoveredAliases(inventoryResult.discoveredRoots);
 	for (const inventory of inventoryResult.inventories) {
 		logOperationRoot(inventory, inventoryResult.inventories.length);
-		const shouldSync =
-			(hasInPlaceState && inPlaceStates.get(inventory.rootPath) === true) ||
-			(!hasInPlaceState && moveStates.get(inventory.rootPath) === true);
-		const exitCode = shouldSync
-			? await runSyncForInventory(resolvedOptions, inventory, DEFAULT_SYNC_BEHAVIOR)
-			: await runConfigureForInventory(resolvedOptions, inventory);
+		const exitCode = await runWithResolvedCollections(options, inventory, (resolvedInventory) =>
+			configuredRoots.get(inventory.rootPath) === true
+				? runManagedSkillsSync(options, resolvedInventory, DEFAULT_SYNC_BEHAVIOR)
+				: runConfigureForInventory(options, resolvedInventory),
+		);
 		if (exitCode !== 0) {
 			return exitCode;
 		}
@@ -1754,32 +1517,36 @@ export async function runCli(argv: string[]): Promise<number> {
 	cli.usage("[path] [options]");
 
 	cli
-		.option("--dry-run", "Preview changes without moving files")
+		.option("--dry-run", "Preview changes without writing files")
 		.option("--yes", "Apply after preview without a confirmation prompt")
-		.option("--claude", "Use in-place manual-only metadata for Claude Code")
-		.option("--cursor", "Use in-place manual-only metadata for Cursor")
-		.option("--codex", "Use move-based indexing for Codex")
-		.option("--copilot", "Use move-based indexing for Copilot")
-		.option("--gemini", "Use move-based indexing for Gemini CLI")
 		.help()
 		.version(CLI_VERSION);
 
-	cli.command("undo", "Undo skillzero's generated layout changes").action(async (options) => {
-		exitCode = await runUndo(readCliOptions(options));
-	});
+	cli
+		.command("undo", "Undo skillzero's metadata and generated index changes")
+		.action(async (options) => {
+			exitCode = await runUndo(readCliOptions(options));
+		});
 
 	cli.command("redo", "Redo the last skillzero undo").action(async (options) => {
 		exitCode = await runRedo(readCliOptions(options));
 	});
 
 	cli
-		.command("collections", "Configure title-and-description groups for managed skills")
+		.command("collections", "Configure title-and-use-condition groups for indexed skills")
 		.action(async (options) => {
 			exitCode = await runCollections(readCliOptions(options));
 		});
 
+	cli.command("hide", "Hide skills from the model and generated indexes").action(async (options) => {
+		exitCode = await runHide(readCliOptions(options));
+	});
+
 	cli
-		.command("update [...skillArgs]", "Restore, run skills update, and rebuild skillzero indexes")
+		.command(
+			"update [...skillArgs]",
+			"Run skills update and refresh skillzero metadata and indexes",
+		)
 		.allowUnknownOptions()
 		.action(async (_skillArgs, options) => {
 			exitCode = await runUpdate(readCliOptions(options), readForwardedUpdateArgs(argv));

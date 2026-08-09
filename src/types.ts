@@ -1,7 +1,3 @@
-export type SkillOrigin = "active" | "managed";
-
-export type InvocationTarget = "claude" | "cursor" | "codex" | "copilot" | "gemini";
-
 export interface DiscoveredSkillsRoot {
 	// `path` preserves the first usable user-facing path, while `realPath` lets
 	// discovery collapse aliases such as .agents/skills -> .claude/skills.
@@ -12,12 +8,10 @@ export interface DiscoveredSkillsRoot {
 
 export interface SkillRecord {
 	id: string;
-	title: string;
 	description: string;
 	disableModelInvocation: boolean;
-	directory: string;
+	openAiImplicitInvocationDisabled: boolean;
 	skillFile: string;
-	origin: SkillOrigin;
 }
 
 export interface SkillCollection {
@@ -27,51 +21,10 @@ export interface SkillCollection {
 	skillIds: string[];
 }
 
-export interface CollectionPlan {
-	indexSkillPath: string;
-	collectionsPath: string;
-	collectionConfigFile: string;
-	collectionConfigContent: string;
-	collectionSkillFiles: { path: string; content: string }[];
-	finalCollections: SkillCollection[];
-	generatedCollectionIdsToRemove: string[];
-	collectionsChanged: boolean;
-}
-
 export interface SkillInventory {
 	rootPath: string;
-	indexSkillPath: string;
-	indexSkillFile: string;
-	managedSkillsPath: string;
-	collectionsPath: string;
-	collectionConfigFile: string;
-	activeSkills: SkillRecord[];
-	managedSkills: SkillRecord[];
+	generatedPath: string;
+	skills: SkillRecord[];
 	collections: SkillCollection[];
 	generatedCollectionIds: string[];
-	indexFileGenerated: boolean;
-	indexFileExists: boolean;
-}
-
-export type MoveOperationKind = "move-to-index" | "restore-to-root";
-
-export interface MoveOperation {
-	id: string;
-	kind: MoveOperationKind;
-	from: string;
-	to: string;
-	fromSkillFile: string;
-	toSkillFile: string;
-	skill: SkillRecord;
-}
-
-export interface MovePlan {
-	indexSkillPath: string;
-	indexSkillFile: string;
-	indexContent: string;
-	managedSkillsPath: string;
-	operations: MoveOperation[];
-	finalManagedSkills: SkillRecord[];
-	collectionPlan: CollectionPlan;
-	indexChanged: boolean;
 }

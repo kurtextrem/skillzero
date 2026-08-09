@@ -18,15 +18,25 @@ describe("formatVisibleOptions", () => {
 		]);
 	});
 
-	it("hides generic state hints for selected skills but keeps collection hints", () => {
+	it("hides selected-state hints while keeping collection and metadata annotations", () => {
 		const options = [
-			{ value: "managed", label: "managed", hint: "managed" },
-			{ value: "design", label: "design", hint: "📚 Design" },
+			{
+				value: "managed",
+				label: "managed",
+				hint: "managed",
+				annotation: "hidden from agent ✅",
+			},
+			{
+				value: "design",
+				label: "design",
+				hint: "📚 Other collection",
+				annotation: "hidden from agent ❌ - lacks OpenAI policy",
+			},
 		];
 
 		expect(formatVisibleOptions(options, 0, ["managed", "design"], 2)).toEqual([
-			"  > [x] managed",
-			"    [x] design (📚 Design)",
+			"  > [x] managed (hidden from agent ✅)",
+			"    [x] design (📚 Other collection) (hidden from agent ❌ - lacks OpenAI policy)",
 		]);
 	});
 

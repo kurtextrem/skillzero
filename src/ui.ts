@@ -12,6 +12,7 @@ export const EMOJI = {
 	// in terminals that measure 🗂️ as one cell.
 	collection: "📚",
 	folder: "📁",
+	ghost: "👻",
 	// Use a stable two-cell emoji here; some terminals render the text/emoji
 	// presentation of ℹ️ at one cell while Clack reserves two.
 	info: "💡",
@@ -19,18 +20,20 @@ export const EMOJI = {
 	link: "🔗",
 	lock: "🔒",
 	managed: "📦",
-	move: "📦",
 	new: "✨",
 	plan: "📋",
-	remove: "🗑️",
-	release: "📤",
-	redo: "↪️",
-	restore: "↩️",
+	// Clack and terminals can disagree on variation-selector emoji width. These
+	// actions use unambiguous one-cell symbols so every note keeps one border.
+	remove: "×",
+	redo: "↪",
+	restore: "↩",
 	success: "✅",
 	keep: "📌",
 	unlock: "🔓",
 	update: "🔄",
-	warning: "⚠️",
+	// Avoid emoji presentation: terminal and Clack width calculations can
+	// disagree on U+FE0F and shift the right edge of titled note borders.
+	warning: "⚠",
 } as const;
 
 // Keep the CLI readable in pipes and CI, while still honoring an explicit color override.

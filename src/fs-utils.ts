@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rmdir, stat } from "node:fs/promises";
 
 export type PathKind = "missing" | "file" | "directory" | "other";
 
@@ -39,4 +39,22 @@ export async function hasDifferentFileContent(
 	}
 
 	return (await readFile(filePath, "utf8")) !== expectedContent;
+}
+
+export async function removeEmptyDirectory(directory: string): Promise<void> {
+	try {
+		await rmdir(directory);
+	} catch (error) {
+		// Empty-directory cleanup is opportunistic. Missing or non-empty paths are
+		// already valid final states, while permission and type errors must surface.
+		if (
+			hasErrorCode(error, "ENOENT") ||
+			hasErrorCode(error, "ENOTEMPTY") ||
+			hasErrorCode(error, "EEXIST")
+		) {
+			return;
+		}
+
+		throw error;
+	}
 }

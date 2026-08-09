@@ -5,29 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
 	buildCollectionPlan,
 	collectionConfigPath,
-	generateCollectionSkill,
 	readCollectionConfig,
 } from "../src/collections.js";
-import { applyMovePlan } from "../src/apply.js";
-import { applyInPlacePlan, buildInPlacePlan } from "../src/in-place.js";
-import { buildMovePlan } from "../src/plan.js";
+import { applyManagedSkillsPlan, buildManagedSkillsPlan } from "../src/managed-skills.js";
 import { scanSkills } from "../src/scanner.js";
 import { createTempRoot, writeSkill } from "./helpers.js";
 
-import type { SkillCollection, SkillRecord } from "../src/types.js";
-
-function managedSkill(rootPath: string, id: string, description: string): SkillRecord {
-	const directory = path.join(rootPath, "skill-index", "skills", id);
-	return {
-		id,
-		title: id,
-		description,
-		disableModelInvocation: false,
-		directory,
-		skillFile: path.join(directory, "_SKILL.md"),
-		origin: "managed",
-	};
-}
+import type { SkillCollection } from "../src/types.js";
 
 describe("skill collections", () => {
 	it("normalizes and reads collection configuration", async () => {
@@ -42,7 +26,7 @@ describe("skill collections", () => {
 					{
 						id: "design",
 						title: " Design ",
-						description: " Read for design tasks. ",
+						description: " design tasks. ",
 						skillIds: ["visual-review", "ui-polish"],
 					},
 				],
@@ -56,7 +40,7 @@ describe("skill collections", () => {
 				{
 					id: "design",
 					title: "Design",
-					description: "Read for design tasks.",
+					description: "Use when design tasks.",
 					skillIds: ["ui-polish", "visual-review"],
 				},
 			],
@@ -85,7 +69,7 @@ describe("skill collections", () => {
 		);
 	});
 
-	it("keeps collections while removing skills that are restored to the root", async () => {
+	it("keeps collections while removing deselected skills", async () => {
 		const rootPath = await createTempRoot();
 		await writeSkill(rootPath, "design-skill", "---\ndescription: Design guidance.\n---\n");
 		await writeSkill(rootPath, "api-skill", "---\ndescription: API guidance.\n---\n");
@@ -95,7 +79,7 @@ describe("skill collections", () => {
 		const collection: SkillCollection = {
 			id: "design",
 			title: "Design",
-			description: "Read for design tasks.",
+			description: "design tasks.",
 			skillIds: ["design-skill"],
 		};
 		await writeFile(
@@ -105,57 +89,42 @@ describe("skill collections", () => {
 		);
 
 		const inventory = await scanSkills(rootPath);
-		const selectedPlan = await buildMovePlan(inventory, ["design-skill"]);
+		const selectedPlan = await buildManagedSkillsPlan(
+			inventory,
+			{ indexIds: ["design-skill"], hideIds: [] },
+			null,
+		);
 		expect(selectedPlan.collectionPlan.finalCollections[0]?.skillIds).toEqual(["design-skill"]);
 
-		const restoredPlan = await buildMovePlan(inventory, []);
+		const restoredPlan = await buildManagedSkillsPlan(
+			inventory,
+			{ indexIds: [], hideIds: ["design-skill"] },
+			null,
+		);
 		expect(restoredPlan.collectionPlan.finalCollections[0]?.skillIds).toEqual([]);
 	});
 
-	it("keeps in-place source paths pointing at the ordinary skill folders", async () => {
+	it("keeps source paths pointing at the ordinary skill folders", async () => {
 		const rootPath = await createTempRoot();
 		await writeSkill(rootPath, "design-skill", "---\ndescription: Design guidance.\n---\n");
 		const inventory = await scanSkills(rootPath);
 		const collection: SkillCollection = {
 			id: "design",
 			title: "Design",
-			description: "Read for tasks related to design.",
+			description: "tasks related to design.",
 			skillIds: ["design-skill"],
 		};
 
-		const plan = await buildInPlacePlan(inventory, ["design-skill"], null, [collection]);
-		await applyInPlacePlan(plan, inventory);
-
-		const generatedCollection = await readFile(
-			path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"),
-			"utf8",
+		const plan = await buildManagedSkillsPlan(
+			inventory,
+			{ indexIds: ["design-skill"], hideIds: [] },
+			null,
+			[collection],
 		);
-		expect(generatedCollection).toContain("../../design-skill/SKILL.md");
-		expect(await readFile(path.join(rootPath, "design-skill", "SKILL.md"), "utf8")).toContain(
-			"disable-model-invocation: true",
-		);
-	});
-
-	it("generates a collection skill with source metadata", () => {
-		const rootPath = "/tmp/project/.codex/skills";
-		const indexPath = path.join(rootPath, "skill-index");
-		const collection: SkillCollection = {
-			id: "design",
-			title: "Design",
-			description: "Read for tasks related to design.",
-			skillIds: ["ui-polish"],
-		};
-
-		expect(
-			generateCollectionSkill(
-				collection,
-				[managedSkill(rootPath, "ui-polish", "Improve UI quality.")],
-				indexPath,
-			),
-		).toMatchInlineSnapshot(`
+		expect(plan.collectionPlan.collectionSkillFiles[0]?.content).toMatchInlineSnapshot(`
 			"---
 			name: design
-			description: "Read for tasks related to design."
+			description: "Use when tasks related to design."
 			---
 			# Design
 
@@ -165,8 +134,18 @@ describe("skill collections", () => {
 
 			| Skill | Description | Source |
 			| --- | --- | --- |
-			| \`ui-polish\` | Improve UI quality. | \`../../skills/ui-polish/_SKILL.md\` |
+			| \`design-skill\` | Design guidance. | \`../../../design-skill/SKILL.md\` |
 			"
 		`);
+		await applyManagedSkillsPlan(plan);
+
+		const generatedCollection = await readFile(
+			path.join(rootPath, "skill-index", "collections", "design", "SKILL.md"),
+			"utf8",
+		);
+		expect(generatedCollection).toContain("../../design-skill/SKILL.md");
+		expect(await readFile(path.join(rootPath, "design-skill", "SKILL.md"), "utf8")).toContain(
+			"disable-model-invocation: true",
+		);
 	});
 });

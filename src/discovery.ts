@@ -5,9 +5,9 @@ import path from "node:path";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 
-import type { DiscoveredSkillsRoot, InvocationTarget } from "./types.js";
+import type { DiscoveredSkillsRoot } from "./types.js";
 
-const ALL_PROJECT_SKILL_ROOTS = [
+const CONVENTIONAL_SKILL_ROOT_SEGMENTS = [
 	[".agents", "skills"],
 	[".claude", "skills"],
 	[".codex", "skills"],
@@ -15,37 +15,6 @@ const ALL_PROJECT_SKILL_ROOTS = [
 	[".gemini", "skills"],
 	[".github", "skills"],
 ];
-
-// Keep discovery limited to locations the requested harness can read. Scanning
-// every folder for every target would apply a layout where that target cannot
-// use the resulting index, especially in a project with separate harnesses.
-const PROJECT_SKILL_ROOTS_BY_TARGET: Record<InvocationTarget, string[][]> = {
-	claude: [
-		[".agents", "skills"],
-		[".claude", "skills"],
-	],
-	cursor: [
-		[".agents", "skills"],
-		[".cursor", "skills"],
-	],
-	codex: [
-		[".agents", "skills"],
-		[".codex", "skills"],
-	],
-	copilot: [
-		[".agents", "skills"],
-		[".claude", "skills"],
-		[".github", "skills"],
-	],
-	gemini: [
-		[".agents", "skills"],
-		[".gemini", "skills"],
-	],
-};
-
-function candidateSegments(target: InvocationTarget | null): readonly string[][] {
-	return target === null ? ALL_PROJECT_SKILL_ROOTS : PROJECT_SKILL_ROOTS_BY_TARGET[target];
-}
 
 function ancestorPaths(startPath: string): string[] {
 	const ancestors: string[] = [];
@@ -103,10 +72,7 @@ async function discoverCandidateRoots(
 	return [...rootsByRealPath.values()];
 }
 
-export async function discoverSkillsRoots(
-	projectPath: string,
-	target: InvocationTarget | null,
-): Promise<DiscoveredSkillsRoot[]> {
+export async function discoverSkillsRoots(projectPath: string): Promise<DiscoveredSkillsRoot[]> {
 	const resolvedProjectPath = path.resolve(projectPath);
 	const projectKind = await getPathKind(resolvedProjectPath);
 	if (projectKind === "missing") {
@@ -116,20 +82,17 @@ export async function discoverSkillsRoots(
 		throw new SkillzeroError(`Project path must be a directory: ${resolvedProjectPath}`);
 	}
 
-	const candidatePaths = candidateSegments(target).map((segments) =>
+	const candidatePaths = CONVENTIONAL_SKILL_ROOT_SEGMENTS.map((segments) =>
 		path.join(resolvedProjectPath, ...segments),
 	);
 	return discoverCandidateRoots(candidatePaths);
 }
 
-export async function discoverSkillsRootsAtPath(
-	scopePath: string,
-	target: InvocationTarget | null,
-): Promise<DiscoveredSkillsRoot[]> {
+export async function discoverSkillsRootsAtPath(scopePath: string): Promise<DiscoveredSkillsRoot[]> {
 	const resolvedScopePath = path.resolve(scopePath);
 	const candidatePaths: string[] = [];
 	for (const ancestorPath of ancestorPaths(resolvedScopePath)) {
-		for (const segments of candidateSegments(target)) {
+		for (const segments of CONVENTIONAL_SKILL_ROOT_SEGMENTS) {
 			const candidatePath = path.join(ancestorPath, ...segments);
 			if (
 				isWithin(candidatePath, resolvedScopePath) ||
@@ -145,7 +108,6 @@ export async function discoverSkillsRootsAtPath(
 
 export async function discoverProjectSkillsRootsAtPath(
 	scopePath: string,
-	target: InvocationTarget | null,
 ): Promise<{ projectPath: string; roots: DiscoveredSkillsRoot[] } | null> {
 	for (const ancestorPath of ancestorPaths(scopePath)) {
 		if (ancestorPath === homedir()) {
@@ -156,7 +118,7 @@ export async function discoverProjectSkillsRootsAtPath(
 			continue;
 		}
 
-		const roots = await discoverSkillsRoots(ancestorPath, target);
+		const roots = await discoverSkillsRoots(ancestorPath);
 		if (roots.length > 0) {
 			return { projectPath: ancestorPath, roots };
 		}
@@ -165,13 +127,11 @@ export async function discoverProjectSkillsRootsAtPath(
 	return null;
 }
 
-export async function discoverGlobalSkillsRoots(
-	target: InvocationTarget | null,
-): Promise<DiscoveredSkillsRoot[]> {
+export async function discoverGlobalSkillsRoots(): Promise<DiscoveredSkillsRoot[]> {
 	// Bare `skillzero` falls back to the conventional user-level roots after
 	// checking the current project, which makes global sync repeatable without
 	// storing machine-specific paths in the project.
-	const candidatePaths = candidateSegments(target).map((segments) =>
+	const candidatePaths = CONVENTIONAL_SKILL_ROOT_SEGMENTS.map((segments) =>
 		path.join(homedir(), ...segments),
 	);
 	return discoverCandidateRoots(candidatePaths);

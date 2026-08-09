@@ -1,78 +1,122 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import matter from "@11ty/gray-matter";
 
 import {
-	GENERATED_MARKER,
-	INDEX_SKILL_NAME,
-	MANAGED_SKILL_FILE_NAME,
-	MANAGED_SKILLS_DIR_NAME,
+	CODEX_METADATA_DIR_NAME,
+	CODEX_METADATA_FILE_NAME,
+	GENERATED_DIR_NAME,
 	SKILL_FILE_NAME,
 } from "./constants.js";
-import {
-	collectionsPath,
-	collectionConfigPath,
-	readCollectionConfig,
-	scanGeneratedCollectionIds,
-} from "./collections.js";
+import { readCollectionConfig, scanGeneratedCollectionIds } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
-import { readSkillRecord } from "./metadata.js";
 
-import type { SkillInventory, SkillOrigin, SkillRecord } from "./types.js";
+import type { SkillInventory, SkillRecord } from "./types.js";
 
-async function readSkillFromDirectory(
-	directory: string,
-	id: string,
-	origin: SkillOrigin,
-	fileName = SKILL_FILE_NAME,
-): Promise<SkillRecord | null> {
-	const skillFile = path.join(directory, fileName);
-	const skillFileKind = await getPathKind(skillFile);
-	if (skillFileKind !== "file") {
+// Source metadata is parsed at the inventory seam so picker status and plan
+// construction share one interpretation of the OpenAI policy file.
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+export function readOpenAiImplicitInvocation(content: string, filePath: string): boolean | null {
+	let parsed: ReturnType<typeof matter>;
+	try {
+		// A custom delimiter lets us reuse the installed YAML parser without
+		// mistaking YAML document separators inside openai.yaml for frontmatter.
+		parsed = matter(`%%%\n${content}\n%%%`, { delimiters: "%%%" });
+	} catch {
+		throw new SkillzeroError(`Invalid OpenAI skill metadata: ${filePath}`);
+	}
+
+	if (!isRecord(parsed.data)) {
+		throw new SkillzeroError(`OpenAI skill metadata must be an object: ${filePath}`);
+	}
+	const policy = parsed.data["policy"];
+	if (policy === undefined) {
+		return null;
+	}
+	if (!isRecord(policy)) {
+		throw new SkillzeroError(`OpenAI skill metadata policy must be an object: ${filePath}`);
+	}
+	const value = policy["allow_implicit_invocation"];
+	if (value === undefined) {
+		return null;
+	}
+	if (typeof value !== "boolean") {
+		throw new SkillzeroError(
+			`policy.allow_implicit_invocation must be true or false: ${filePath}`,
+		);
+	}
+
+	return value;
+}
+
+async function hasOpenAiExplicitOnlyPolicy(directory: string): Promise<boolean> {
+	const filePath = path.join(directory, CODEX_METADATA_DIR_NAME, CODEX_METADATA_FILE_NAME);
+	const kind = await getPathKind(filePath);
+	if (kind === "missing") {
+		return false;
+	}
+	if (kind !== "file") {
+		throw new SkillzeroError(`OpenAI skill metadata must be a file: ${filePath}`);
+	}
+
+	return readOpenAiImplicitInvocation(await readFile(filePath, "utf8"), filePath) === false;
+}
+
+function readDescription(data: unknown): string | null {
+	if (!isRecord(data) || typeof data["description"] !== "string") {
 		return null;
 	}
 
-	return readSkillRecord(id, directory, skillFile, origin);
+	const description = data["description"].trim();
+	return description.length > 0 ? description : null;
 }
 
-async function readManagedSkillFromDirectory(
-	directory: string,
-	id: string,
-): Promise<SkillRecord | null> {
-	const hiddenSkillFile = path.join(directory, MANAGED_SKILL_FILE_NAME);
-	const manualSkillFile = path.join(directory, SKILL_FILE_NAME);
-	const hiddenSkillFileKind = await getPathKind(hiddenSkillFile);
-	const manualSkillFileKind = await getPathKind(manualSkillFile);
+function firstUsefulBodyLine(content: string): string | null {
+	for (const line of content.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed.length === 0 || trimmed.startsWith("#") || trimmed.startsWith("<!--")) {
+			continue;
+		}
 
-	if (hiddenSkillFileKind !== "missing" && hiddenSkillFileKind !== "file") {
-		throw new SkillzeroError(`Path conflict: ${hiddenSkillFile} must be a file.`);
-	}
-	if (manualSkillFileKind !== "missing" && manualSkillFileKind !== "file") {
-		throw new SkillzeroError(`Path conflict: ${manualSkillFile} must be a file.`);
-	}
-	if (hiddenSkillFileKind === "file" && manualSkillFileKind === "file") {
-		throw new SkillzeroError(
-			`Path conflict: managed skill has both ${MANAGED_SKILL_FILE_NAME} and ${SKILL_FILE_NAME}: ${directory}`,
-		);
-	}
-
-	if (hiddenSkillFileKind === "file") {
-		return readSkillRecord(id, directory, hiddenSkillFile, "managed");
-	}
-	if (manualSkillFileKind === "file") {
-		throw new SkillzeroError(
-			"Managed skill must use " + MANAGED_SKILL_FILE_NAME + " in moved mode: " + manualSkillFile,
-		);
+		return trimmed;
 	}
 
 	return null;
 }
 
-async function scanImmediateSkillChildren(
-	rootPath: string,
-	origin: SkillOrigin,
-	readSkill = readSkillFromDirectory,
-): Promise<SkillRecord[]> {
+async function readSkillFromDirectory(
+	directory: string,
+	id: string,
+): Promise<SkillRecord | null> {
+	const skillFile = path.join(directory, SKILL_FILE_NAME);
+	const skillFileKind = await getPathKind(skillFile);
+	if (skillFileKind !== "file") {
+		return null;
+	}
+
+	const [content, openAiImplicitInvocationDisabled] = await Promise.all([
+		readFile(skillFile, "utf8"),
+		hasOpenAiExplicitOnlyPolicy(directory),
+	]);
+	const parsed = matter(content);
+	return {
+		id,
+		description:
+			readDescription(parsed.data) ??
+			firstUsefulBodyLine(parsed.content) ??
+			"No description provided.",
+		disableModelInvocation:
+			isRecord(parsed.data) && parsed.data["disable-model-invocation"] === true,
+		openAiImplicitInvocationDisabled,
+		skillFile,
+	};
+}
+
+async function scanImmediateSkillChildren(rootPath: string): Promise<SkillRecord[]> {
 	const entries = await readdir(rootPath, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));
 
@@ -87,11 +131,11 @@ async function scanImmediateSkillChildren(
 			continue;
 		}
 
-		const skill = await readSkill(directory, entry.name, origin);
+		const skill = await readSkillFromDirectory(directory, entry.name);
 		if (skill !== null) {
 			// A directory can be linked twice under one skills root. Keep the first
 			// stable name so one physical SKILL.md cannot receive conflicting state
-			// entries or be moved twice during the same operation.
+			// entries during the same operation.
 			const physicalSkillFile = await realpath(skill.skillFile);
 			if (seenSkillFiles.has(physicalSkillFile)) {
 				continue;
@@ -117,69 +161,27 @@ export async function scanSkills(rootPath: string): Promise<SkillInventory> {
 		throw new SkillzeroError(`Skills path must be a directory: ${resolvedRoot}`);
 	}
 
-	const indexSkillPath = path.join(resolvedRoot, INDEX_SKILL_NAME);
-	const indexSkillFile = path.join(indexSkillPath, SKILL_FILE_NAME);
-	const managedSkillsPath = path.join(indexSkillPath, MANAGED_SKILLS_DIR_NAME);
-	const skillCollectionsPath = collectionsPath(indexSkillPath);
-	const collectionConfigFile = collectionConfigPath(indexSkillPath);
-
-	const indexPathKind = await getPathKind(indexSkillPath);
-	if (indexPathKind !== "missing" && indexPathKind !== "directory") {
-		throw new SkillzeroError(`Path conflict: ${indexSkillPath} must be a directory.`);
+	const generatedPath = path.join(resolvedRoot, GENERATED_DIR_NAME);
+	const generatedPathKind = await getPathKind(generatedPath);
+	if (generatedPathKind !== "missing" && generatedPathKind !== "directory") {
+		throw new SkillzeroError(`Path conflict: ${generatedPath} must be a directory.`);
 	}
 
-	const indexFileKind = await getPathKind(indexSkillFile);
-	if (indexFileKind !== "missing" && indexFileKind !== "file") {
-		throw new SkillzeroError(`Path conflict: ${indexSkillFile} must be a file.`);
-	}
-
-	let indexFileGenerated = false;
-	if (indexFileKind === "file") {
-		const content = await readFile(indexSkillFile, "utf8");
-		indexFileGenerated = content.includes(GENERATED_MARKER);
-		if (!indexFileGenerated) {
-			throw new SkillzeroError(
-				`Refusing to overwrite non-generated index skill: ${indexSkillFile}`,
-			);
-		}
-	}
-
-	const collectionConfig = await readCollectionConfig(indexSkillPath);
+	const collectionConfig = await readCollectionConfig(generatedPath);
 	const generatedCollectionIds = await scanGeneratedCollectionIds(
-		indexSkillPath,
+		generatedPath,
 		collectionConfig.collections,
 	);
 
-	const activeSkills = (await scanImmediateSkillChildren(resolvedRoot, "active")).filter(
-		(skill) => skill.id !== INDEX_SKILL_NAME,
+	const skills = (await scanImmediateSkillChildren(resolvedRoot)).filter(
+		(skill) => skill.id !== GENERATED_DIR_NAME,
 	);
-
-	const managedSkillsPathKind = await getPathKind(managedSkillsPath);
-	if (managedSkillsPathKind !== "missing" && managedSkillsPathKind !== "directory") {
-		throw new SkillzeroError(`Path conflict: ${managedSkillsPath} must be a directory.`);
-	}
-
-	// Managed skills are scanned shallowly so a nested skill can carry assets or
-	// helper folders without accidentally becoming another managed entry.
-	const managedSkills =
-		managedSkillsPathKind === "directory"
-			? await scanImmediateSkillChildren(managedSkillsPath, "managed", (directory, id) =>
-					readManagedSkillFromDirectory(directory, id),
-				)
-			: [];
 
 	return {
 		rootPath: resolvedRoot,
-		indexSkillPath,
-		indexSkillFile,
-		managedSkillsPath,
-		collectionsPath: skillCollectionsPath,
-		collectionConfigFile,
-		activeSkills,
-		managedSkills,
+		generatedPath,
+		skills,
 		collections: collectionConfig.collections,
 		generatedCollectionIds,
-		indexFileGenerated,
-		indexFileExists: indexFileKind === "file",
 	};
 }

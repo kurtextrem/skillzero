@@ -2,14 +2,11 @@
 
 Modern agent harnesses expose every installed skill's name and description to the model (but not their full content). With many skills, that can still **consume tokens, increase cost and add irrelevant context**. [Matt Pocock has called out the same problem](https://x.com/mattpocockuk/status/2067205673792721057).
 
-skillzero allows you to completely hide skills from the agent or to group them in collections the agent can invoke lazily:
+skillzero gives every managed skill one of two states:
 
-**Hidden skills** (`skillzero`): Completely hidden from agents, but are still manually invokable
+**👻 Hidden**: Hidden from implicit model selection and generated routing, but still manually invokable.
 
-**📚 Collections** (`skillzero collections`):
-
-- Group indexed skills by use case, such as design or writing
-- Expose one focused routing description per group
+**📚 Collection**: Hidden individually, but discoverable through one or more generated collection skills. Makes sense to group skills for design, writing, etc.
 
 ## Usage
 
@@ -40,11 +37,11 @@ skillzero redo
 | `SKILL.md` | Sets `disable-model-invocation: true`. |
 | `agents/openai.yaml` | Sets `policy.allow_implicit_invocation: false` for Codex. |
 
-Indexed and hidden skills are both managed by skillzero. For each managed skill, skillzero sets `disable-model-invocation: true` and the Codex [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933) in place.
+Skills are hidden by setting the metadata needed to hide them from the Cursor/Claude Code harness and to hide them from Codex by setting the [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933).
 
 ## Good Uses
 
-Use this for skills you want available but do not need on most tasks:
+Use skillzero for skills you want available but do not need on most tasks, like:
 
 - one-off platform guidance
 - migration guides
@@ -53,7 +50,9 @@ Use this for skills you want available but do not need on most tasks:
 - skills that work like commands (you only invoke manually 99% of the time ... and some authors haven't heard of `disable-model-invocation: true` / the Codex policy yet)
 - spreadsheet and document tools
 
-Keep a skill top-level when you use it frequently:
+Collections are great when you have multiple skills for one topic (e.g. for marketing, design, writing, ...) so the model can use them through the description.
+
+Don't pick skills you use frequently, like:
 
 - repo coding rules
 - accessibility rules for a frontend project

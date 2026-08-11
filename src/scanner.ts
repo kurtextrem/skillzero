@@ -12,20 +12,14 @@ import { scanGeneratedCollectionIds } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 import { readSkillzeroState } from "./state.js";
+import { isRecord } from "./values.js";
 
 import type { SkillInventory, SkillRecord } from "./types.js";
 
-// Source metadata is parsed at the inventory seam so picker status and plan
-// construction share one interpretation of the OpenAI policy file.
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
+/** Read OpenAI policy YAML without mistaking document separators for skill frontmatter. */
 export function readOpenAiImplicitInvocation(content: string, filePath: string): boolean | null {
 	let parsed: ReturnType<typeof matter>;
 	try {
-		// A custom delimiter lets us reuse the installed YAML parser without
-		// mistaking YAML document separators inside openai.yaml for frontmatter.
 		parsed = matter(`%%%\n${content}\n%%%`, { delimiters: "%%%" });
 	} catch {
 		throw new SkillzeroError(`Invalid OpenAI skill metadata: ${filePath}`);

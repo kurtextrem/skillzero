@@ -8,6 +8,18 @@ skillzero gives every managed skill one of two states:
 
 **📚 Collection**: Hidden individually, but discoverable through one or more generated collection skills. Makes sense to group skills for design, writing, etc.
 
+## Installation
+
+```sh
+npx skillzero # npm
+
+pnpx skillzero # pnpm
+
+yarn dlx skillzero # yarn
+
+aube dlx skillzero # aube
+```
+
 ## Usage
 
 ```sh
@@ -30,6 +42,8 @@ skillzero undo
 skillzero redo
 ```
 
+`skillzero update` requires Vercel's [`skills`](https://github.com/vercel-labs/skills) CLI to be available on `PATH`. Arguments after `skillzero update` are forwarded to `skills update`, including `--global`, `--project`, and `--yes`.
+
 ## How
 
 | Metadata | What skillzero changes |
@@ -38,6 +52,8 @@ skillzero redo
 | `agents/openai.yaml` | Sets `policy.allow_implicit_invocation: false` for Codex. |
 
 Skills are hidden by setting the metadata needed to hide them from the Cursor/Claude Code harness and to hide them from Codex by setting the [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933).
+
+skillzero also stores its managed state and generated collection skills in a `skillzero/` directory inside each skills root. `skillzero --dry-run` previews changes without writing. `skillzero undo` restores the metadata and removes generated collection changes; `skillzero redo` reapplies the most recently undone state.
 
 ## Good Uses
 
@@ -62,18 +78,19 @@ Don't pick skills you use frequently, like:
 
 ## Development
 
-This project uses the very fast package manager [Aube](https://aube.en.dev/).
+This project uses the package manager [Aube](https://aube.jdx.dev/).
 
 ```sh
 aube install
-aubr build
+aube run build
 ```
 
 Run checks:
 
 ```sh
-aubr typecheck
+aube run typecheck
 aube test
+aube run test:package
 ```
 
 ## Good to know

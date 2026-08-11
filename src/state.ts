@@ -5,6 +5,7 @@ import { parseSkillCollections } from "./collections.js";
 import { STATE_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
+import { isRecord } from "./values.js";
 
 import type {
 	CodexMetadataState,
@@ -12,10 +13,6 @@ import type {
 	ManagedSkillState,
 	SkillzeroState,
 } from "./types.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
 
 function isFrontmatterState(value: unknown): value is FrontmatterState {
 	if (!isRecord(value)) {

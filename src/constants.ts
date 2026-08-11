@@ -1,5 +1,22 @@
+import { readFileSync } from "node:fs";
+
+import { isRecord } from "./values.js";
+
 export const CLI_NAME = "skillzero";
-export const CLI_VERSION = "1.0.0";
+
+// The package manifest is the release source of truth. Reading it here prevents
+// the installed CLI banner and --version output from drifting after a version bump.
+const packageManifest: unknown = JSON.parse(
+	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+);
+if (
+	!isRecord(packageManifest) ||
+	!("version" in packageManifest) ||
+	typeof packageManifest.version !== "string"
+) {
+	throw new Error("package.json must contain a string version");
+}
+export const CLI_VERSION = packageManifest.version;
 export const GENERATED_DIR_NAME = "skillzero";
 export const SKILL_FILE_NAME = "SKILL.md";
 export const STATE_FILE_NAME = "state.json";

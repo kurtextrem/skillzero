@@ -211,18 +211,29 @@ describe("skillzero update", () => {
 		);
 	});
 
-	it("uses hidden selection first and exposes only assigned collection skills", async () => {
+	it("manages selected skills and exposes only assigned collection skills", async () => {
 		const rootPath = await createTempRoot();
 		await writeSkill(rootPath, "collection-skill", "---\ndescription: Collection skill.\n---\n");
 		await writeSkill(rootPath, "private", "---\ndescription: Private skill.\n---\n");
 		promptConfirmMock.mockResolvedValue(true);
-		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+		promptSelectMock
+			.mockImplementationOnce((options: { initialValue?: string }) => {
+				expect(options.initialValue).toBe("add");
+				return Promise.resolve("add");
+			})
+			.mockImplementationOnce((options: { initialValue?: string }) => {
+				expect(options.initialValue).toBe("done");
+				return Promise.resolve("done");
+			});
 		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
 		visibleMultiselectMock.mockImplementationOnce(
 			(options: { initialValues: string[]; message: string }) => {
 				expect(options.initialValues).toEqual(["collection-skill", "private"]);
-				expect(options.message).toContain("👻 hidden · 📚 collection");
-				return Promise.resolve({ status: "ok", selectedIds: ["private"] });
+				expect(options.message).toContain("Select skills for skillzero to manage");
+				return Promise.resolve({
+					status: "ok",
+					selectedIds: ["collection-skill", "private"],
+				});
 			},
 		);
 		visibleMultiselectMock.mockResolvedValueOnce({
@@ -247,15 +258,16 @@ describe("skillzero update", () => {
 				message: string;
 				options: { value: string; hint?: string }[];
 			}) => {
-				expect(options.initialValues).toEqual(["private"]);
-				expect(options.message).toContain("👻 hidden · 📚 collection");
-				expect(options.options.find((option) => option.value === "private")?.hint).toBe(
-					"👻 hidden",
-				);
+				expect(options.initialValues).toEqual(["collection-skill", "private"]);
+				expect(options.message).toContain("Select skills for skillzero to manage");
+				expect(options.options.find((option) => option.value === "private")?.hint).toBeUndefined();
 				expect(options.options.find((option) => option.value === "collection-skill")?.hint).toBe(
 					"📚 Design",
 				);
-				return Promise.resolve({ status: "ok", selectedIds: ["private"] });
+				return Promise.resolve({
+					status: "ok",
+					selectedIds: ["collection-skill", "private"],
+				});
 			},
 		);
 		const previewResult = await captureRunFrom(rootPath, ["--dry-run"]);
@@ -268,6 +280,40 @@ describe("skillzero update", () => {
 		expect((await scanSkills(rootPath)).state).toMatchObject({
 			skills: [{ id: "collection-skill" }, { id: "private" }],
 		});
+	});
+
+	it("selects collection-visible managed skills without removing their memberships", async () => {
+		const rootPath = await createTempRoot();
+		await writeSkill(rootPath, "collection-skill", "---\ndescription: Collection skill.\n---\n");
+		await writeSkill(rootPath, "private", "---\ndescription: Private skill.\n---\n");
+		const inventory = await scanSkills(rootPath);
+		await applyManagedSkillsPlan(
+			await buildManagedSkillsPlan(inventory, ["private"], null, [
+				{
+					id: "design",
+					title: "Design",
+					description: "Design tasks.",
+					skillIds: ["collection-skill"],
+				},
+			]),
+		);
+		promptConfirmMock.mockResolvedValue(true);
+		visibleMultiselectMock.mockImplementationOnce(
+			(options: { initialValues: string[] }) => {
+				expect(options.initialValues).toEqual(["collection-skill", "private"]);
+				return Promise.resolve({
+					status: "ok",
+					selectedIds: ["collection-skill", "private"],
+				});
+			},
+		);
+
+		const result = await captureRunFrom(rootPath, []);
+
+		expect(result.code, result.stderr).toBe(0);
+		expect((await scanSkills(rootPath)).state?.collections).toMatchObject([
+			{ id: "design", skillIds: ["collection-skill"] },
+		]);
 	});
 
 	it("asks before removing unknown skills from a collection and preserves them when declined", async () => {
@@ -322,9 +368,9 @@ describe("skillzero update", () => {
 			(options: { options: { value: string; annotation?: string }[] }) => {
 				expect(options.options.map((option) => [option.value, option.annotation])).toEqual([
 					["d-ordinary", undefined],
-					["c-frontmatter", "👻 ❌ - lacks OpenAI policy"],
-					["b-policy", "👻 lacks disable-model-invocation"],
-					["a-both", "👻 ✅"],
+					["c-frontmatter", "[!] lacks OpenAI policy"],
+					["b-policy", "[!] lacks disable-model-invocation"],
+					["a-both", "[H]"],
 				]);
 				return Promise.resolve({
 					status: "ok",
@@ -332,6 +378,7 @@ describe("skillzero update", () => {
 				});
 			},
 		);
+		promptSelectMock.mockResolvedValueOnce("done");
 
 		const result = await captureRunFrom(rootPath, ["--dry-run"]);
 
@@ -443,7 +490,7 @@ describe("skillzero update", () => {
 		).resolves.toBe(true);
 	});
 
-	it("offers collection assignment for a newly installed skill left unhidden", async () => {
+	it("offers collection assignment for a newly selected skill", async () => {
 		const rootPath = await createTempRoot();
 		await configureManagedSkill(rootPath, "existing", "---\ndescription: Existing skill.\n---\n");
 		spawnSyncMock.mockImplementation(() => {
@@ -452,12 +499,23 @@ describe("skillzero update", () => {
 		});
 
 		promptConfirmMock.mockResolvedValue(true);
-		promptSelectMock.mockResolvedValueOnce("add").mockResolvedValueOnce("done");
+		promptSelectMock
+			.mockImplementationOnce((options: { initialValue?: string }) => {
+				expect(options.initialValue).toBe("done");
+				return Promise.resolve("add");
+			})
+			.mockImplementationOnce((options: { initialValue?: string }) => {
+				expect(options.initialValue).toBe("done");
+				return Promise.resolve("done");
+			});
 		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
 		visibleMultiselectMock
 			.mockImplementationOnce((options: { initialValues: string[] }) => {
 				expect(options.initialValues).toEqual(["existing"]);
-				return Promise.resolve({ status: "ok", selectedIds: ["existing"] });
+				return Promise.resolve({
+					status: "ok",
+					selectedIds: ["existing", "new-skill"],
+				});
 			})
 			.mockResolvedValueOnce({
 				status: "ok",

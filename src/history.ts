@@ -5,6 +5,7 @@ import { parseSkillCollections } from "./collections.js";
 import { REDO_STATE_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
+import { isRecord } from "./values.js";
 
 import type { SkillCollection } from "./types.js";
 
@@ -14,10 +15,6 @@ export interface RedoState {
 	version: 1;
 	hiddenIds: string[];
 	collections: SkillCollection[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function parseRedoState(content: string, filePath: string): RedoState {
@@ -69,13 +66,13 @@ export async function readRedoState(rootPath: string): Promise<RedoState | null>
 
 export async function writeRedoState(rootPath: string, state: RedoState): Promise<void> {
 	const filePath = redoStatePath(rootPath);
-	const normalized: RedoState = {
+	const savedState: RedoState = {
 		version: 1,
 		hiddenIds: [...state.hiddenIds].sort((left, right) => left.localeCompare(right)),
 		collections: parseSkillCollections(state.collections, filePath),
 	};
 
-	await writeFile(filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+	await writeFile(filePath, `${JSON.stringify(savedState, null, 2)}\n`, "utf8");
 }
 
 export async function clearRedoState(rootPath: string): Promise<void> {

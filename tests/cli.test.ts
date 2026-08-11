@@ -191,7 +191,7 @@ describe("runCli", () => {
 		const result = await captureRunFrom(rootPath, ["collections", "--dry-run"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("No collection skills or collections found");
+		expect(result.stdout).toContain("No managed skills or collections found");
 	});
 
 	it("reports missing paths", async () => {

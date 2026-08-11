@@ -1,20 +1,41 @@
 {
 	"name": "skillzero",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"description": "CLI for hiding agent skills and creating focused collections.",
+	"keywords": [
+		"agent-skills",
+		"ai-agents",
+		"claude-code",
+		"cli",
+		"codex",
+		"cursor"
+	],
+	"homepage": "https://github.com/kurtextrem/skillzero#readme",
+	"bugs": {
+		"url": "https://github.com/kurtextrem/skillzero/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kurtextrem/skillzero.git"
+	},
+	"license": "MIT",
 	"bin": {
 		"skillzero": "./dist/index.js"
 	},
 	"files": [
 		"dist",
-		"README.md"
+		"README.md",
+		"LICENSE"
 	],
 	"type": "module",
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"clean": "node scripts/clean.mjs",
+		"build": "aube run clean && tsc -p tsconfig.build.json",
 		"dev": "bun src/index.ts",
 		"typecheck": "tsc -p tsconfig.json",
 		"test": "vitest run",
+		"test:package": "node scripts/smoke-package.mjs",
+		"prepack": "aube run build",
 		"format": "oxfmt"
 	},
 	"dependencies": {
@@ -25,13 +46,16 @@
 		"tokenx": "^2.1.0"
 	},
 	"devDependencies": {
-		"@types/node": "^25.9.5",
+		"@types/node": "^22.0.0",
 		"oxfmt": "^0.62.0",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.10"
 	},
 	"engines": {
-		"node": ">=20.19.0"
+		"node": ">=22"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"packageManager": "aube@1.37.0"
 }

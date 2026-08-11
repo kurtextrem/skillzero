@@ -165,8 +165,8 @@ function withDisableModelInvocation(content: string, value: OriginalModelInvocat
 	return `${beforeFrontmatter}${frontmatter}${replacement}${afterFrontmatter}`;
 }
 
-function withCodexImplicitInvocationDisabled(content: string, filePath: string): string {
-	readOpenAiImplicitInvocation(content, filePath);
+/** Change only the policy field so user-authored YAML keeps its layout and comments. */
+function disableCodexImplicitInvocation(content: string, filePath: string): string {
 	const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
 	const hasTrailingNewline = content.endsWith("\n");
 	const lines = content.split(/\r?\n/);
@@ -229,10 +229,6 @@ function withCodexImplicitInvocationDisabled(content: string, filePath: string):
 	return `${prefix}policy:${lineEnding}  allow_implicit_invocation: false${lineEnding}`;
 }
 
-function stateById(state: SkillzeroState | null): Map<string, ManagedSkillState> {
-	return new Map(state?.skills.map((skill) => [skill.id, skill]));
-}
-
 function sortedState(
 	skills: ManagedSkillState[],
 	knownIds: Iterable<string>,
@@ -252,15 +248,6 @@ function sortedState(
 		skills: skills.sort((left, right) => left.id.localeCompare(right.id)),
 		collections,
 	};
-}
-
-function statesDiffer(
-	previousState: SkillzeroState | null,
-	nextState: SkillzeroState | null,
-): boolean {
-	// State is part of the applied layout. Normalized JSON comparison keeps a
-	// no-op sync from requesting confirmation or rewriting metadata.
-	return JSON.stringify(previousState) !== JSON.stringify(nextState);
 }
 
 export async function buildManagedSkillsPlan(
@@ -287,7 +274,7 @@ export async function buildManagedSkillsPlan(
 		throw new SkillzeroError(`Unknown managed skill names: ${unknownIds.join(", ")}`);
 	}
 
-	const previousById = stateById(previousState);
+	const previousById = new Map(previousState?.skills.map((skill) => [skill.id, skill]));
 	const operations: MetadataOperation[] = [];
 	const nextSkills: ManagedSkillState[] = [];
 	const finalManagedSkills = inventory.skills.filter((skill) => managedIdSet.has(skill.id));
@@ -330,7 +317,7 @@ export async function buildManagedSkillsPlan(
 		if (currentCodexValue === false) {
 			codexState = previous?.codex?.appliedContentHash === codexHash ? previous.codex : undefined;
 		} else {
-			const updatedContent = withCodexImplicitInvocationDisabled(codexContent ?? "", codexFile);
+			const updatedContent = disableCodexImplicitInvocation(codexContent ?? "", codexFile);
 			operations.push({
 				id: skill.id,
 				kind: "write",
@@ -414,6 +401,8 @@ export async function buildManagedSkillsPlan(
 	);
 	const finalHiddenSkills = finalManagedSkills.filter((skill) => !collectionSkillIds.has(skill.id));
 	const nextState = sortedState(nextSkills, nextKnownIds, collectionPlan.finalCollections);
+	// Sorted state makes byte comparison enough to skip no-op state writes.
+	const stateChanged = JSON.stringify(previousState) !== JSON.stringify(nextState);
 	return {
 		rootPath: inventory.rootPath,
 		stateFile: skillzeroStatePath(inventory.generatedPath),
@@ -421,7 +410,7 @@ export async function buildManagedSkillsPlan(
 		finalHiddenSkills,
 		operations,
 		nextState,
-		stateChanged: statesDiffer(previousState, nextState),
+		stateChanged,
 		collectionPlan,
 	};
 }

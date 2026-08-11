@@ -1,4 +1,5 @@
 import { AutocompletePrompt, getRows, isCancel, wrapTextWithPrefix } from "@clack/core";
+import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import { estimateSkillMetadataTokens } from "./tokens.js";
@@ -23,6 +24,8 @@ interface VisibleMultiselectOptions {
 	options: VisibleMultiselectOption[];
 	initialValues?: string[];
 	required?: boolean;
+	input?: Readable;
+	output?: Writable;
 }
 
 const MAX_DETAIL_LINES = 8;
@@ -45,14 +48,14 @@ function formatOption(
 	selectedValues: readonly string[],
 ): string {
 	const pointer = active ? accent(">") : " ";
-	const checkbox = selectedValues.includes(option.value) ? "[x]" : "[ ]";
+	const selected = selectedValues.includes(option.value);
+	const checkbox = selected ? "[x]" : "[ ]";
 	const label = active ? bold(option.label) : dim(option.label);
-	const hideSelectedStateHint =
-		selectedValues.includes(option.value) && option.hideHintWhenSelected === true;
+	const hideSelectedStateHint = selected && option.hideHintWhenSelected === true;
 	const hint = option.hint && !hideSelectedStateHint ? ` ${dim(`(${option.hint})`)}` : "";
 	// Keep persistent skill metadata separate from transient selection hints so
-	// it remains visible after a row is selected and never relies on color alone.
-	const annotation = option.annotation ? ` ${dim(`(${option.annotation})`)}` : "";
+	// it remains visible after a row is selected and never relies on color or punctuation.
+	const annotation = option.annotation ? ` ${dim(option.annotation)}` : "";
 
 	return `${pointer} ${checkbox} ${label}${hint}${annotation}`;
 }
@@ -63,12 +66,12 @@ export function formatSourceLink(source: string): string {
 
 function formatDescription(
 	name: string | undefined,
-	description: string | undefined,
+	rawDescription: string | undefined,
 	source: string | undefined,
 ): string[] {
-	const normalizedDescription = description?.trim();
+	const description = rawDescription?.trim();
 	const sourceLine = source ? [`    ${dim("Source:")} ${formatSourceLink(source)}`] : [];
-	if (!normalizedDescription) {
+	if (!description) {
 		return name
 			? [
 					dim(`The agent sees these ${estimateSkillMetadataTokens(name, "")} tokens:`),
@@ -77,25 +80,19 @@ function formatDescription(
 			: sourceLine;
 	}
 
-	const wrappedLines = wrapTextWithPrefix(process.stdout, normalizedDescription, "    ").split(
-		"\n",
-	);
+	const wrappedLines = wrapTextWithPrefix(process.stdout, description, "    ").split("\n");
 	const maxLines = Math.max(2, Math.min(MAX_DETAIL_LINES, getRows(process.stdout) - 9));
 	const descriptionHeader = name
-		? dim(
-				`The agent sees these ${estimateSkillMetadataTokens(name, normalizedDescription)} tokens:`,
-			)
+		? dim(`The agent sees these ${estimateSkillMetadataTokens(name, description)} tokens:`)
 		: null;
-	if (wrappedLines.length <= maxLines) {
-		const detailLines = descriptionHeader ? [descriptionHeader, ...wrappedLines] : wrappedLines;
-		return sourceLine.length > 0 ? [...detailLines, "", ...sourceLine] : detailLines;
-	}
-
-	const truncatedLines = [
-		...wrappedLines.slice(0, maxLines - 1),
-		`    ${dim("[description truncated]")}`,
-	];
-	const detailLines = descriptionHeader ? [descriptionHeader, ...truncatedLines] : truncatedLines;
+	const body =
+		wrappedLines.length <= maxLines
+			? wrappedLines
+			: [
+					...wrappedLines.slice(0, maxLines - 1),
+					`    ${dim("[description truncated]")}`,
+				];
+	const detailLines = descriptionHeader ? [descriptionHeader, ...body] : body;
 	return sourceLine.length > 0 ? [...detailLines, "", ...sourceLine] : detailLines;
 }
 
@@ -139,7 +136,8 @@ export async function promptVisibleMultiselect(
 	const prompt = new AutocompletePrompt<VisibleMultiselectOption>({
 		options: options.options,
 		multiple: true,
-		initialValue: options.initialValues,
+		...(options.input === undefined ? {} : { input: options.input }),
+		...(options.output === undefined ? {} : { output: options.output }),
 		filter: matchesSearch,
 		validate: (value) => {
 			if (options.required !== true || (Array.isArray(value) && value.length > 0)) {
@@ -183,6 +181,13 @@ export async function promptVisibleMultiselect(
 			return [...header, ...rows, ...detailBlock, ...error].join("\n");
 		},
 	});
+	// Clack advances its cursor for every initial value, which leaves a fully
+	// selected list focused at the bottom. Restoring the public selection state
+	// after construction keeps every checkbox while its cursor remains at index 0.
+	const availableValues = new Set(options.options.map((option) => option.value));
+	prompt.selectedValues = (options.initialValues ?? []).filter((value) =>
+		availableValues.has(value),
+	);
 
 	const selectedIds = await prompt.prompt();
 	if (isCancel(selectedIds)) {

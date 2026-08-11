@@ -13,17 +13,14 @@ export function estimateSavedTokens(
 	skills: readonly SkillMetadataForTokenEstimate[],
 	collections: readonly SkillMetadataForTokenEstimate[] = [],
 ): number {
-	const managedTokens = skills.reduce(
-		(total, skill) => total + estimateSkillMetadataTokens(skill.id, skill.description),
-		0,
-	);
-	const collectionTokens = collections.reduce(
-		(total, collection) =>
-			total + estimateSkillMetadataTokens(collection.id, collection.description),
-		0,
-	);
-
 	// Collection skills remain visible, so their routing metadata still consumes
 	// context even though every source skill is explicit-only.
-	return Math.max(0, managedTokens - collectionTokens);
+	return Math.max(0, sumTokens(skills) - sumTokens(collections));
+}
+
+function sumTokens(items: readonly SkillMetadataForTokenEstimate[]): number {
+	return items.reduce(
+		(total, item) => total + estimateSkillMetadataTokens(item.id, item.description),
+		0,
+	);
 }

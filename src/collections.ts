@@ -5,6 +5,7 @@ import { GENERATED_MARKER, SKILL_FILE_NAME } from "./constants.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind, hasDifferentFileContent, removeEmptyDirectory } from "./fs-utils.js";
 import { EMOJI } from "./ui.js";
+import { isRecord } from "./values.js";
 
 import type { SkillCollection, SkillInventory, SkillRecord } from "./types.js";
 
@@ -14,10 +15,6 @@ export interface CollectionPlan {
 	finalCollections: SkillCollection[];
 	generatedCollectionIdsToRemove: string[];
 	collectionsChanged: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -33,7 +30,7 @@ function isCollectionId(value: string): boolean {
 	return /^[a-z0-9][a-z0-9-]*$/.test(value);
 }
 
-function normalizeText(value: string): string {
+function cleanText(value: string): string {
 	return value.replace(/\s+/g, " ").trim();
 }
 
@@ -42,20 +39,20 @@ const COLLECTION_DESCRIPTION_PREFIX = "Use when ";
 // Keep collection frontmatter canonical while letting the editor work with
 // only the user-authored completion after "Use when".
 export function collectionDescriptionInput(description: string): string {
-	const normalized = normalizeText(description);
-	return normalized.startsWith(COLLECTION_DESCRIPTION_PREFIX)
-		? normalized.slice(COLLECTION_DESCRIPTION_PREFIX.length)
-		: normalized;
+	const text = cleanText(description);
+	return text.startsWith(COLLECTION_DESCRIPTION_PREFIX)
+		? text.slice(COLLECTION_DESCRIPTION_PREFIX.length)
+		: text;
 }
 
 export function formatCollectionDescription(input: string): string {
 	return `${COLLECTION_DESCRIPTION_PREFIX}${collectionDescriptionInput(input)}`;
 }
 
-function normalizeCollection(collection: SkillCollection): SkillCollection {
+function cleanCollection(collection: SkillCollection): SkillCollection {
 	return {
 		id: collection.id,
-		title: normalizeText(collection.title),
+		title: cleanText(collection.title),
 		description: formatCollectionDescription(collection.description),
 		skillIds: [...collection.skillIds].sort((left, right) => left.localeCompare(right)),
 	};
@@ -93,8 +90,8 @@ function parseCollection(value: unknown, filePath: string, index: number): Skill
 	return { id, title, description, skillIds };
 }
 
-// Active state and redo snapshots persist the same domain records. Keep their
-// validation and normalization here so both formats have one contract.
+// Active state and redo snapshots store the same records. Parse and clean them
+// here so both formats have one contract.
 export function parseSkillCollections(value: unknown, filePath: string): SkillCollection[] {
 	if (!Array.isArray(value)) {
 		throw new SkillzeroError(`Invalid collections in ${filePath}`);
@@ -114,7 +111,11 @@ export function parseSkillCollections(value: unknown, filePath: string): SkillCo
 
 	return collections
 		.sort((left, right) => left.id.localeCompare(right.id))
-		.map(normalizeCollection);
+		.map(cleanCollection);
+}
+
+export function collectionSkillIds(collections: readonly SkillCollection[]): Set<string> {
+	return new Set(collections.flatMap((collection) => collection.skillIds));
 }
 
 export function collectionDirectoryPath(generatedPath: string, collectionId: string): string {
@@ -135,7 +136,7 @@ export function collectionIdFromTitle(title: string): string {
 	return id.length > 0 ? id : "collection";
 }
 
-async function validateConfiguredCollectionFiles(
+async function validateCollectionFiles(
 	generatedPath: string,
 	collections: SkillCollection[],
 ): Promise<void> {
@@ -169,24 +170,23 @@ export async function scanGeneratedCollectionIds(
 ): Promise<string[]> {
 	// Stale generated collection files are safe to remove later; any user-authored
 	// SKILL.md in this reserved tree must stop the run before a write occurs.
-	await validateConfiguredCollectionFiles(generatedPath, configuredCollections);
+	await validateCollectionFiles(generatedPath, configuredCollections);
 
-	const rootPath = generatedPath;
-	const rootKind = await getPathKind(rootPath);
+	const rootKind = await getPathKind(generatedPath);
 	if (rootKind === "missing") {
 		return [];
 	}
 	if (rootKind !== "directory") {
-		throw new SkillzeroError(`Path conflict: ${rootPath} must be a directory.`);
+		throw new SkillzeroError(`Path conflict: ${generatedPath} must be a directory.`);
 	}
 
 	const configuredIds = new Set(configuredCollections.map((collection) => collection.id));
-	const entries = await readdir(rootPath, { withFileTypes: true });
+	const entries = await readdir(generatedPath, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));
 
 	const generatedIds: string[] = [];
 	for (const entry of entries) {
-		const directory = path.join(rootPath, entry.name);
+		const directory = path.join(generatedPath, entry.name);
 		if ((await getPathKind(directory)) !== "directory") {
 			continue;
 		}
@@ -212,31 +212,6 @@ export async function scanGeneratedCollectionIds(
 	}
 
 	return generatedIds;
-}
-
-async function validateCollectionDestinations(plan: CollectionPlan): Promise<void> {
-	for (const collection of plan.finalCollections) {
-		const directory = collectionDirectoryPath(plan.generatedPath, collection.id);
-		const directoryKind = await getPathKind(directory);
-		if (directoryKind !== "missing" && directoryKind !== "directory") {
-			throw new SkillzeroError(`Path conflict: ${directory} must be a directory.`);
-		}
-
-		const skillFile = collectionSkillFilePath(plan.generatedPath, collection.id);
-		const skillFileKind = await getPathKind(skillFile);
-		if (skillFileKind !== "missing" && skillFileKind !== "file") {
-			throw new SkillzeroError(`Path conflict: ${skillFile} must be a file.`);
-		}
-
-		if (
-			skillFileKind === "file" &&
-			!(await readFile(skillFile, "utf8")).includes(GENERATED_MARKER)
-		) {
-			throw new SkillzeroError(
-				`Refusing to overwrite non-generated collection skill: ${skillFile}`,
-			);
-		}
-	}
 }
 
 export async function buildCollectionPlan(
@@ -275,24 +250,24 @@ export async function buildCollectionPlan(
 	}
 
 	finalCollections.sort((left, right) => left.id.localeCompare(right.id));
-	const normalizedCollections = finalCollections.map(normalizeCollection);
+	const cleanCollections = finalCollections.map(cleanCollection);
 	// Plans carry the exact bytes they validate. Applying a confirmed plan must
 	// not rerun rendering against domain records that a caller could mutate.
-	const collectionSkillFiles = normalizedCollections.map((collection) => ({
+	const collectionSkillFiles = cleanCollections.map((collection) => ({
 		path: collectionSkillFilePath(inventory.generatedPath, collection.id),
 		content: generateCollectionSkill(collection, finalManagedSkills, inventory.generatedPath),
 	}));
 	const plan: CollectionPlan = {
 		generatedPath: inventory.generatedPath,
 		collectionSkillFiles,
-		finalCollections: normalizedCollections,
+		finalCollections: cleanCollections,
 		generatedCollectionIdsToRemove: inventory.generatedCollectionIds
 			.filter((id) => !collectionIds.has(id))
 			.sort((left, right) => left.localeCompare(right)),
 		collectionsChanged: false,
 	};
 
-	await validateCollectionDestinations(plan);
+	await validateCollectionFiles(plan.generatedPath, plan.finalCollections);
 	let collectionsChanged = false;
 	for (const file of plan.collectionSkillFiles) {
 		if (await hasDifferentFileContent(file.path, file.content)) {

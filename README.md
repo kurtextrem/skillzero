@@ -1,12 +1,14 @@
 # skillzero
 
-Modern agent harnesses expose every installed skill's name and description to the model (but not their full content). With many skills, that can still **consume tokens, increase cost and add irrelevant context**. [Matt Pocock has called out the same problem](https://x.com/mattpocockuk/status/2067205673792721057).
+Modern agent harnesses expose every installed skill's name and description to the model (but not their full content). With many skills, that can still **consume tokens, increase cost and add irrelevant context**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
 
-skillzero gives every managed skill one of two states:
+skillzero solves it by diving skills into 3 categories:
 
-**👻 Hidden**: Hidden from implicit model selection and generated routing, but still manually invokable.
+1. **Unmanaged**: Skills that are untouched by skillzero - agents see their name and description as usual.
 
-**📚 Collection**: Hidden individually, but discoverable through one or more generated collection skills. Makes sense to group skills for design, writing, etc.
+2. **👻 Hidden**: Skills become completely hidden from the agent, but are still manually invokable (like commands).
+
+3. **📚 Collection**: Skills in collections are hidden by default, but become discoverable generated collection skills. This allows you to group skills for design, writing, etc. where the agent can invoke the skills when working on topics related to the collection.
 
 ## Installation
 
@@ -42,14 +44,14 @@ skillzero undo
 skillzero redo
 ```
 
-`skillzero update` requires Vercel's [`skills`](https://github.com/vercel-labs/skills) CLI to be available on `PATH`. Arguments after `skillzero update` are forwarded to `skills update`, including `--global`, `--project`, and `--yes`.
+<sub>`skillzero update` requires Vercel's [`skills`](https://github.com/vercel-labs/skills) CLI to be available on `PATH`. Arguments after `skillzero update` are forwarded to `skills update`, including `--global`, `--project`, and `--yes`.</sub>
 
 ## How
 
 | Metadata | What skillzero changes |
 | --- | --- |
 | `SKILL.md` | Sets `disable-model-invocation: true`. |
-| `agents/openai.yaml` | Sets `policy.allow_implicit_invocation: false` for Codex. |
+| `agents/openai.yaml` | Sets `policy.allow_implicit_invocation: false` |
 
 Skills are hidden by setting the metadata needed to hide them from the Cursor/Claude Code harness and to hide them from Codex by setting the [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933).
 
@@ -95,4 +97,5 @@ aube run test:package
 
 ## Good to know
 
-Run [`/checkup`](https://x.com/bcherny/status/2074997570317779038) to clean up unused skills.
+- Run [`/checkup`](https://x.com/bcherny/status/2074997570317779038) to clean up unused skills.
+- More tips in Matt Pocock's [article](https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt) on how to remove context bloat (`/context`, remove bundled skills, ...)

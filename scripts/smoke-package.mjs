@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -36,41 +36,25 @@ async function run(command, args, cwd = repositoryRoot) {
 	});
 }
 
-async function listSourceModules(directory, prefix = "") {
-	const modules = [];
-	for (const entry of await readdir(directory, { withFileTypes: true })) {
-		const relativePath = path.posix.join(prefix, entry.name);
-		if (entry.isDirectory()) {
-			modules.push(...(await listSourceModules(path.join(directory, entry.name), relativePath)));
-		} else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
-			modules.push(relativePath.slice(0, -3));
-		}
-	}
-	return modules;
-}
-
 function readPackResult(output) {
 	const results = JSON.parse(output);
 	if (!Array.isArray(results) || results.length !== 1 || typeof results[0] !== "object") {
-		throw new Error("Expected aube pack to return exactly one package");
+		throw new Error("Expected npm pack to return exactly one package");
 	}
 	return results[0];
 }
 
-function assertPackedFiles(packResult, sourceModules) {
-	const expectedFiles = new Set(["LICENSE", "README.md", "package.json"]);
-	for (const modulePath of sourceModules) {
-		for (const extension of [".d.ts", ".js", ".js.map"]) {
-			expectedFiles.add(`dist/${modulePath}${extension}`);
-		}
-	}
+function assertPackedFiles(packResult) {
+	// skillzero is an executable package, so its public tarball contains one
+	// self-contained JavaScript file and the metadata required by npm.
+	const expectedFiles = new Set(["LICENSE", "README.md", "dist/index.js", "package.json"]);
 
 	const actualFiles = new Set(packResult.files.map((file) => file.path));
 	const missing = [...expectedFiles].filter((file) => !actualFiles.has(file));
 	const unexpected = [...actualFiles].filter((file) => !expectedFiles.has(file));
 	if (missing.length > 0 || unexpected.length > 0) {
 		throw new Error(
-			`Packed files do not match current source. Missing: ${missing.join(", ") || "none"}. Unexpected: ${unexpected.join(", ") || "none"}.`,
+			`Packed files do not match the CLI release contract. Missing: ${missing.join(", ") || "none"}. Unexpected: ${unexpected.join(", ") || "none"}.`,
 		);
 	}
 }
@@ -78,16 +62,18 @@ function assertPackedFiles(packResult, sourceModules) {
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), "skillzero-package-"));
 try {
 	await run("aube", ["run", "build"]);
-	const dryRun = await run("aube", ["pack", "--dry-run", "--ignore-scripts", "--json"]);
-	assertPackedFiles(
-		readPackResult(dryRun.stdout),
-		await listSourceModules(path.join(repositoryRoot, "src")),
-	);
+	// npm is the production publisher, so this must exercise npm's manifest
+	// normalization instead of relying on another package manager's pack behavior.
+	const dryRun = await run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"]);
+	assertPackedFiles(readPackResult(dryRun.stdout));
 
 	const packed = readPackResult(
 		(
-			await run("aube", [
+			await run("npm", [
 				"pack",
+				// A parent `npm publish --dry-run` exports its setting to child npm
+				// commands; this step needs a real temporary tarball to test installation.
+				"--dry-run=false",
 				"--ignore-scripts",
 				"--json",
 				"--pack-destination",

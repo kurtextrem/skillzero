@@ -20,7 +20,7 @@
 	},
 	"license": "MIT",
 	"bin": {
-		"skillzero": "./dist/index.js"
+		"skillzero": "dist/index.js"
 	},
 	"files": [
 		"dist",
@@ -29,25 +29,26 @@
 	],
 	"type": "module",
 	"scripts": {
-		"clean": "node scripts/clean.mjs",
-		"build": "aube run clean && tsc -p tsconfig.build.json",
+		"build": "tsdown",
 		"dev": "bun src/index.ts",
 		"typecheck": "tsc -p tsconfig.json",
 		"test": "vitest run",
 		"test:package": "node scripts/smoke-package.mjs",
+		"release": "npm publish --ignore-scripts=false",
+		"prepublishOnly": "aube run typecheck && aube test && aube run test:package",
 		"prepack": "aube run build",
 		"format": "oxfmt"
 	},
-	"dependencies": {
+	"packageManager": "aube@1.37.0",
+	"devDependencies": {
 		"@11ty/gray-matter": "^3.0.0",
 		"@clack/core": "^1.4.3",
 		"@clack/prompts": "^1.7.0",
-		"cac": "^7.0.0",
-		"tokenx": "^2.1.0"
-	},
-	"devDependencies": {
 		"@types/node": "^22.0.0",
+		"cac": "^7.0.0",
 		"oxfmt": "^0.62.0",
+		"tokenx": "^2.1.0",
+		"tsdown": "^0.22.14",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.10"
 	},
@@ -56,6 +57,5 @@
 	},
 	"publishConfig": {
 		"access": "public"
-	},
-	"packageManager": "aube@1.37.0"
+	}
 }

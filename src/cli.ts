@@ -277,6 +277,13 @@ function runSkillsUpdate(args: readonly string[]): void {
 	p.note("Refreshing installed skills through the skills CLI.", `${EMOJI.update} Updating skills`);
 	const result = spawnSync("skills", ["update", ...args], { stdio: "inherit" });
 	if (result.error) {
+		// A missing executable is actionable for the user; preserve the original
+		// system error for permission failures and other launch problems.
+		if (isRecord(result.error) && result.error["code"] === "ENOENT") {
+			throw new SkillzeroError(
+				"The `skills` CLI is not installed. Install it globally with `npm install --global skills`.",
+			);
+		}
 		throw new SkillzeroError(`Could not run skills update: ${result.error.message}`);
 	}
 	if (result.status !== 0) {

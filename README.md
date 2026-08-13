@@ -1,6 +1,7 @@
 # skillzero
 
-Modern agent harnesses expose every installed skill's name and description to the model (but not their full content). With many skills, that can still **consume tokens, increase cost and add irrelevant context**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
+Many modern agent harnesses only expose every installed skill's name and description to the model, no longer their full content*.
+With many skills, that can still **consume tokens, increase cost and add irrelevant context**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
 
 skillzero solves it by diving skills into 3 categories:
 
@@ -9,6 +10,10 @@ skillzero solves it by diving skills into 3 categories:
 2. **👻 Hidden**: Skills become completely hidden from the agent, but are still manually invokable (like commands).
 
 3. **📚 Collection**: Skills in collections are hidden by default, but become discoverable generated collection skills. This allows you to group skills for design, writing, etc. where the agent can invoke the skills when working on topics related to the collection.
+
+By hiding skills or placing them in a collection, you allow the agent to focus on skills that it should automatically use, instead of wasting tokens every turn.
+
+<sub>* Claude Code includes the full description of most-used skills for up to 1% of the context limit</sub>
 
 ## Installation
 

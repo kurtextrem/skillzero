@@ -166,14 +166,19 @@ async function syncInventory(
 	}
 
 	const managedIds = new Set(state?.skills.map((skill) => skill.id) ?? []);
-	// First-time setup selects every skill. Later runs start from saved ownership
-	// so discovery cannot silently manage a new skill.
+	// A new root starts with no selected ownership. Preselecting every skill makes
+	// an unconfigured root look like it inherited management from another root.
 	const initialSelectedIds = inventory.skills
-		.filter((skill) => state === null || managedIds.has(skill.id))
+		.filter((skill) => managedIds.has(skill.id))
 		.map((skill) => skill.id);
+	// --yes is an explicit non-interactive opt-in, so preserve its first-time
+	// behavior of managing every discovered skill even though the interactive
+	// picker starts empty for a root without saved state.
+	const automaticSelectedIds =
+		state === null ? inventory.skills.map((skill) => skill.id) : initialSelectedIds;
 	const selection =
 		options.yes || (followsUpdate && newSkillIds.length === 0)
-			? { status: "ok" as const, selectedIds: initialSelectedIds }
+			? { status: "ok" as const, selectedIds: automaticSelectedIds }
 			: await chooseManagedSkills(
 					inventory,
 					"Select skills for skillzero to manage",

@@ -227,8 +227,7 @@ describe("skillzero update", () => {
 			});
 		promptTextMock.mockResolvedValueOnce("Design").mockResolvedValueOnce("design tasks.");
 		visibleMultiselectMock.mockImplementationOnce(
-			(options: { initialValues: string[]; message: string }) => {
-				expect(options.initialValues).toEqual(["collection-skill", "private"]);
+			(options: { message: string }) => {
 				expect(options.message).toContain("Select skills for skillzero to manage");
 				return Promise.resolve({
 					status: "ok",
@@ -279,6 +278,37 @@ describe("skillzero update", () => {
 		expect(visibleMultiselectMock).toHaveBeenCalledTimes(3);
 		expect((await scanSkills(rootPath)).state).toMatchObject({
 			skills: [{ id: "collection-skill" }, { id: "private" }],
+		});
+	});
+
+	it("does not preselect skills for a new explicit root while --yes manages all skills", async () => {
+		const explicitRoot = await createTempRoot();
+		await writeSkill(explicitRoot, "first", "---\ndescription: First skill.\n---\n");
+		await writeSkill(explicitRoot, "second", "---\ndescription: Second skill.\n---\n");
+		visibleMultiselectMock.mockImplementationOnce(
+			(options: { initialValues: string[]; message: string }) => {
+				// An explicit root with no state is a new scope, not proof that every skill is owned.
+				expect(options.initialValues).toEqual([]);
+				expect(options.message).toContain("Select skills for skillzero to manage");
+				return Promise.resolve({ status: "ok", selectedIds: [] });
+			},
+		);
+
+		const interactiveResult = await captureRun([explicitRoot, "--dry-run"]);
+
+		expect(interactiveResult.code, interactiveResult.stderr).toBe(0);
+		expect(visibleMultiselectMock).toHaveBeenCalledTimes(1);
+
+		const yesRoot = await createTempRoot();
+		await writeSkill(yesRoot, "first", "---\ndescription: First skill.\n---\n");
+		await writeSkill(yesRoot, "second", "---\ndescription: Second skill.\n---\n");
+
+		const yesResult = await captureRun([yesRoot, "--yes"]);
+
+		expect(yesResult.code, yesResult.stderr).toBe(0);
+		expect(visibleMultiselectMock).toHaveBeenCalledTimes(1);
+		expect((await scanSkills(yesRoot)).state).toMatchObject({
+			skills: [{ id: "first" }, { id: "second" }],
 		});
 	});
 

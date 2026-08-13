@@ -66,10 +66,16 @@ export function keepManagedSkills(
 	collections: SkillCollection[],
 	managedIds: ReadonlySet<string>,
 ): SkillCollection[] {
-	return collections.map((collection) => ({
-		...collection,
-		skillIds: collection.skillIds.filter((skillId) => managedIds.has(skillId)),
-	}));
+	const retainedCollections: SkillCollection[] = [];
+	for (const collection of collections) {
+		const skillIds = collection.skillIds.filter((skillId) => managedIds.has(skillId));
+		// A collection without managed skills cannot route to anything. Removing it
+		// here lets collection planning delete its generated skill and preview that change.
+		if (skillIds.length > 0) {
+			retainedCollections.push({ ...collection, skillIds });
+		}
+	}
+	return retainedCollections;
 }
 
 /** Edit copies so cancellation cannot alter the scanned inventory. */

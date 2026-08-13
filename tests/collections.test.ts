@@ -2,8 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { applyManagedSkillsPlan, buildManagedSkillsPlan } from "../src/managed-skills.js";
+import {
+	applyManagedSkillsPlan,
+	buildManagedSkillsPlan,
+	formatManagedSkillsPlan,
+} from "../src/managed-skills.js";
 import { scanSkills } from "../src/scanner.js";
+import { keepManagedSkills } from "../src/skill-selection.js";
 import { readSkillzeroState, skillzeroStatePath } from "../src/state.js";
 import { createTempRoot, writeSkill } from "./helpers.js";
 
@@ -110,6 +115,31 @@ describe("skill collections", () => {
 			[{ ...collection, skillIds: [] }],
 		);
 		expect(restoredPlan.collectionPlan.finalCollections[0]?.skillIds).toEqual([]);
+	});
+
+	it("removes a generated collection when none of its skills remain managed", async () => {
+		const rootPath = await createTempRoot();
+		await writeSkill(rootPath, "design-skill", "---\ndescription: Design guidance.\n---\n");
+		const collection: SkillCollection = {
+			id: "design",
+			title: "Design",
+			description: "design tasks.",
+			skillIds: ["design-skill"],
+		};
+
+		const initialInventory = await scanSkills(rootPath);
+		await applyManagedSkillsPlan(
+			await buildManagedSkillsPlan(initialInventory, ["design-skill"], null, [collection]),
+		);
+
+		const inventory = await scanSkills(rootPath);
+		const collections = keepManagedSkills(inventory.collections, new Set());
+		const plan = await buildManagedSkillsPlan(inventory, [], inventory.state, collections);
+
+		expect(collections).toEqual([]);
+		expect(plan.collectionPlan.finalCollections).toEqual([]);
+		expect(plan.collectionPlan.generatedCollectionIdsToRemove).toEqual(["design"]);
+		expect(formatManagedSkillsPlan(plan)).toContain("Remove generated collection: design");
 	});
 
 	it("keeps source paths pointing at the ordinary skill folders", async () => {

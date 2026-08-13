@@ -8,6 +8,7 @@ import {
 	formatManagedSkillsPlan,
 } from "../src/managed-skills.js";
 import { scanSkills } from "../src/scanner.js";
+import { estimateSkillMetadataTokens } from "../src/tokens.js";
 import { createTempRoot, writeSkill } from "./helpers.js";
 
 async function exists(filePath: string): Promise<boolean> {
@@ -26,7 +27,7 @@ describe("managed skill metadata", () => {
 		await writeSkill(rootPath, "private-notes", "---\ndescription: Read private notes.\n---\n");
 
 		const inventory = await scanSkills(rootPath);
-		const plan = await buildManagedSkillsPlan(inventory, ["ui-polish", "private-notes"], null, [
+		const plan = await buildManagedSkillsPlan(inventory, ["private-notes"], null, [
 			{
 				id: "design",
 				title: "Design",
@@ -48,6 +49,15 @@ describe("managed skill metadata", () => {
 		const formattedPlan = formatManagedSkillsPlan(plan);
 		expect(formattedPlan).toContain("- 🔒 Update disable-model-invocation: private-notes");
 		expect(formattedPlan).toContain("- 🔒 Add OpenAI policy: private-notes");
+		// Collection members still save their original discoverable metadata; only
+		// the generated collection's discoverable name and description are deducted.
+		const expectedSavedTokens =
+			estimateSkillMetadataTokens("private-notes", "Read private notes.") +
+			estimateSkillMetadataTokens("ui-polish", "Improve UI quality.") -
+			estimateSkillMetadataTokens("design", "Use when polishing interfaces.");
+		expect(formattedPlan).toContain(
+			`Skillzero now saves ${expectedSavedTokens} tokens for you.`,
+		);
 		await applyManagedSkillsPlan(plan);
 
 		await expect(exists(path.join(rootPath, "ui-polish", "SKILL.md"))).resolves.toBe(true);

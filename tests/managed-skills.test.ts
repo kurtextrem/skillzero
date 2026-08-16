@@ -69,15 +69,19 @@ describe("managed skill metadata", () => {
 		).resolves.toContain("allow_implicit_invocation: false");
 		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
 		await expect(
-			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero-design", "SKILL.md"), "utf8"),
 		).resolves.toContain("ui-polish");
 		await expect(
-			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero-design", "SKILL.md"), "utf8"),
 		).resolves.not.toContain("private-notes");
+		await expect(exists(path.join(rootPath, "skillzero", "design", "SKILL.md"))).resolves.toBe(
+			false,
+		);
 		await expect(
 			readFile(path.join(rootPath, "private-notes", "SKILL.md"), "utf8"),
 		).resolves.toContain("disable-model-invocation: true");
 		const configuredInventory = await scanSkills(rootPath);
+		expect(configuredInventory.skills.map((skill) => skill.id)).not.toContain("skillzero-design");
 		expect(configuredInventory.state).toMatchObject({
 			version: 1,
 			skills: [{ id: "private-notes" }, { id: "ui-polish" }],

@@ -104,7 +104,7 @@ describe("skillzero undo and redo", () => {
 			exists(path.join(rootPath, "private-notes", "agents", "openai.yaml")),
 		).resolves.toBe(false);
 		await expect(
-			exists(path.join(rootPath, "skillzero", "design", "SKILL.md")),
+			exists(path.join(rootPath, "skillzero-design", "SKILL.md")),
 		).resolves.toBe(false);
 		await expect(exists(path.join(rootPath, "skillzero"))).resolves.toBe(false);
 		await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(true);
@@ -120,7 +120,7 @@ describe("skillzero undo and redo", () => {
 		).resolves.toContain("allow_implicit_invocation: false");
 		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
 		await expect(
-			exists(path.join(rootPath, "skillzero", "design", "SKILL.md")),
+			exists(path.join(rootPath, "skillzero-design", "SKILL.md")),
 		).resolves.toBe(true);
 		await expect(exists(path.join(rootPath, "skillzero", "state.json"))).resolves.toBe(true);
 		await expect(exists(path.join(rootPath, ".skillzero-redo.json"))).resolves.toBe(false);
@@ -130,7 +130,7 @@ describe("skillzero undo and redo", () => {
 			collections: [{ id: "design", skillIds: ["ui-polish"] }],
 		});
 		await expect(
-			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero-design", "SKILL.md"), "utf8"),
 		).resolves.not.toContain("private-notes");
 	});
 

@@ -60,7 +60,7 @@ skillzero redo
 
 Skills are hidden by setting the metadata needed to hide them from the Cursor/Claude Code harness and to hide them from Codex by setting the [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933).
 
-skillzero also stores its managed state and generated collection skills in a `skillzero/` directory inside each skills root. `skillzero --dry-run` previews changes without writing. `skillzero undo` restores the metadata and removes generated collection changes; `skillzero redo` reapplies the most recently undone state.
+skillzero stores its managed state in a `skillzero/` directory inside each skills root and writes generated collection skills beside ordinary skills as `skillzero-<collection-id>/` folders. `skillzero --dry-run` previews changes without writing. `skillzero undo` restores the metadata and removes generated collection changes; `skillzero redo` reapplies the most recently undone state.
 
 ## Good Uses
 

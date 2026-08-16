@@ -8,7 +8,7 @@ import {
 	GENERATED_DIR_NAME,
 	SKILL_FILE_NAME,
 } from "./constants.js";
-import { scanGeneratedCollectionIds } from "./collections.js";
+import { collectionDirectoryPath, scanGeneratedCollectionIds } from "./collections.js";
 import { SkillzeroError } from "./errors.js";
 import { getPathKind } from "./fs-utils.js";
 import { readSkillzeroState } from "./state.js";
@@ -168,9 +168,14 @@ export async function scanSkills(rootPath: string): Promise<SkillInventory> {
 		generatedPath,
 		collections,
 	);
+	const generatedCollectionNames = new Set(
+		generatedCollectionIds.map((id) => path.basename(collectionDirectoryPath(generatedPath, id))),
+	);
 
+	// Top-level generated collections contain SKILL.md too, but they are routing
+	// entries rather than user-owned skills and must not enter the inventory.
 	const skills = (await scanImmediateSkillChildren(resolvedRoot)).filter(
-		(skill) => skill.id !== GENERATED_DIR_NAME,
+		(skill) => skill.id !== GENERATED_DIR_NAME && !generatedCollectionNames.has(skill.id),
 	);
 
 	return {

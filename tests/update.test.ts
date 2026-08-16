@@ -249,7 +249,7 @@ describe("skillzero update", () => {
 		});
 		await expect(exists(path.join(rootPath, "skillzero", "SKILL.md"))).resolves.toBe(false);
 		await expect(
-			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero-design", "SKILL.md"), "utf8"),
 		).resolves.toContain("collection-skill");
 		visibleMultiselectMock.mockImplementationOnce(
 			(options: {
@@ -555,11 +555,11 @@ describe("skillzero update", () => {
 		const result = await captureRunFrom(rootPath, ["update"]);
 
 		expect(result.code).toBe(0);
-		await expect(exists(path.join(rootPath, "skillzero", "design", "SKILL.md"))).resolves.toBe(
+		await expect(exists(path.join(rootPath, "skillzero-design", "SKILL.md"))).resolves.toBe(
 			true,
 		);
 		await expect(
-			readFile(path.join(rootPath, "skillzero", "design", "SKILL.md"), "utf8"),
+			readFile(path.join(rootPath, "skillzero-design", "SKILL.md"), "utf8"),
 		).resolves.toContain("new-skill");
 		expect(promptSelectMock).toHaveBeenCalledTimes(2);
 	});

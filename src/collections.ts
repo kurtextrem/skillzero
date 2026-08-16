@@ -17,6 +17,9 @@ export interface CollectionPlan {
 	collectionsChanged: boolean;
 }
 
+/** Prefix reserved for top-level generated collection skill folders. */
+export const COLLECTION_SKILL_PREFIX = "skillzero-";
+
 function readNonEmptyString(value: unknown): string | null {
 	if (typeof value !== "string") {
 		return null;
@@ -119,7 +122,9 @@ export function collectionSkillIds(collections: readonly SkillCollection[]): Set
 }
 
 export function collectionDirectoryPath(generatedPath: string, collectionId: string): string {
-	return path.join(generatedPath, collectionId);
+	// State stays under skillzero/, while generated collection skills sit beside
+	// ordinary skills so the harness can discover them as top-level skills.
+	return path.join(path.dirname(generatedPath), `${COLLECTION_SKILL_PREFIX}${collectionId}`);
 }
 
 function collectionSkillFilePath(generatedPath: string, collectionId: string): string {
@@ -169,24 +174,34 @@ export async function scanGeneratedCollectionIds(
 	configuredCollections: SkillCollection[],
 ): Promise<string[]> {
 	// Stale generated collection files are safe to remove later; any user-authored
-	// SKILL.md in this reserved tree must stop the run before a write occurs.
+	// SKILL.md under the reserved top-level prefix must stop the run before a write occurs.
 	await validateCollectionFiles(generatedPath, configuredCollections);
 
-	const rootKind = await getPathKind(generatedPath);
+	const skillsRootPath = path.dirname(generatedPath);
+	const rootKind = await getPathKind(skillsRootPath);
 	if (rootKind === "missing") {
 		return [];
 	}
 	if (rootKind !== "directory") {
-		throw new SkillzeroError(`Path conflict: ${generatedPath} must be a directory.`);
+		throw new SkillzeroError(`Path conflict: ${skillsRootPath} must be a directory.`);
 	}
 
 	const configuredIds = new Set(configuredCollections.map((collection) => collection.id));
-	const entries = await readdir(generatedPath, { withFileTypes: true });
+	const entries = await readdir(skillsRootPath, { withFileTypes: true });
 	entries.sort((left, right) => left.name.localeCompare(right.name));
 
 	const generatedIds: string[] = [];
 	for (const entry of entries) {
-		const directory = path.join(generatedPath, entry.name);
+		if (!entry.name.startsWith(COLLECTION_SKILL_PREFIX)) {
+			continue;
+		}
+
+		const collectionId = entry.name.slice(COLLECTION_SKILL_PREFIX.length);
+		if (!isCollectionId(collectionId)) {
+			throw new SkillzeroError(`Invalid generated collection skill path: ${entry.name}`);
+		}
+
+		const directory = path.join(skillsRootPath, entry.name);
 		if ((await getPathKind(directory)) !== "directory") {
 			continue;
 		}
@@ -202,13 +217,13 @@ export async function scanGeneratedCollectionIds(
 
 		const content = await readFile(skillFile, "utf8");
 		if (!content.includes(GENERATED_MARKER)) {
-			const message = configuredIds.has(entry.name)
+			const message = configuredIds.has(collectionId)
 				? "Refusing to overwrite non-generated collection skill"
 				: "Unexpected non-generated collection skill";
 			throw new SkillzeroError(`${message}: ${skillFile}`);
 		}
 
-		generatedIds.push(entry.name);
+		generatedIds.push(collectionId);
 	}
 
 	return generatedIds;

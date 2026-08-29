@@ -9,7 +9,7 @@ skillzero solves it by diving skills into 3 categories:
 
 2. **👻 Hidden**: Skills become completely hidden from the agent, but are still manually invokable (like commands).
 
-3. **📚 Collection**: Skills in collections are hidden by default, but become discoverable generated collection skills. This allows you to group skills for design, writing, etc. where the agent can invoke the skills when working on topics related to the collection.
+3. **📚 Collection**: Skills in collections are hidden by default, but become discoverable generated collection skills. This allows you to group skills for specific use-cases,  where the agent can invoke the skills when working on topics related to the collection. Examples: design, marketing, videos, writing, etc. - or frontend / backend skills if you work on either more often than the other.
 
 By hiding skills or placing them in a collection, you allow the agent to focus on skills that it should automatically use, instead of wasting tokens every turn.
 
@@ -70,18 +70,17 @@ Use skillzero for skills you want available but do not need on most tasks, like:
 - migration guides
 - niche framework rules
 - experimental skills you are trying out
-- skills that work like commands (you only invoke manually 99% of the time ... and some authors haven't heard of `disable-model-invocation: true` / the Codex policy yet)
 - spreadsheet and document tools
+- skills that work like commands (you only invoke manually 99% of the time ... and some authors haven't heard of `disable-model-invocation: true` / the Codex policy yet)
 
-Collections are great when you have multiple skills for one topic (e.g. for marketing, design, writing, ...) so the model can use them through the description.
+Collections are great when you have multiple skills for one topic (e.g. for marketing, design, writing, ...).
 
 Don't pick skills you use frequently, like:
 
 - repo coding rules
-- accessibility rules for a frontend project
+- accessibility related skills
 - the framework guidance you use every day
 - project-specific review or test placement rules
-- accessibility related skills
 
 ## Development
 

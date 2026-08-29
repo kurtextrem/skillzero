@@ -1,7 +1,7 @@
 # skillzero
 
 Many modern agent harnesses only expose every installed skill's name and description to the model, no longer their full content*.
-With many skills, that can still **consume tokens, increase cost and add irrelevant context**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
+With many skills, that can still **consume tokens, increase cost, [lead to accidental triggers](https://addyo.substack.com/p/audit-your-agent-files) and add irrelevant context to the session permanently**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
 
 skillzero solves it by diving skills into 3 categories:
 

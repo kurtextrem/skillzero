@@ -2,32 +2,28 @@
 
 ![skillzero banner](assets/skillzero-banner.png)
 
-Many modern agent harnesses only expose every installed skill's name and description to the model, no longer their full content*.
-With many skills, that can still **consume tokens, increase cost, [lead to accidental triggers](https://addyo.substack.com/p/audit-your-agent-files) and add irrelevant context to the session permanently**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
+<p align="center"><sub><em>Skillmaxxers rejoice. You can now enjoy skills and save tokens.</em></sub></p>
+
+Many modern agent harnesses expose every installed skill's name and description to the model (but not their full content).
+With many skills, even that can still **consume tokens, increase cost, [lead to accidental triggers](https://addyo.substack.com/p/audit-your-agent-files) and add irrelevant context to the session permanently**. Experts like [Matt Pocock](https://x.com/mattpocockuk/status/2067205673792721057), [Addy Osmani](https://x.com/addyosmani/status/2086871426653356066) and [swyx](https://x.com/swyx/status/2086505938144616810) have called out the same problem.
 
 skillzero solves it by diving skills into 3 categories:
 
-1. **Unmanaged**: Skills that are untouched by skillzero - agents see their name and description as usual.
+1. **Unmanaged**: stay as-is, not touched by skillzero - agents see their name and description as usual.
 
-2. **👻 Hidden**: Skills become completely hidden from the agent, but are still manually invokable (like commands).
+2. **👻 Hidden**: Completely hidden to the agent - so not even name and description make it into the context (but are still manually invokable, like commands).
 
-3. **📚 Collection**: Skills in collections are hidden by default, but become discoverable generated collection skills. This allows you to group skills for specific use-cases,  where the agent can invoke the skills when working on topics related to the collection. Examples: design, marketing, videos, writing, etc. - or frontend / backend skills if you work on either more often than the other.
+3. **📚 Collection**: Allows you to bundle skills that fit one topic into one skill, so the agent only lazily reads the skills when you work on a topic related to the skills in the collection. Examples: design, marketing, videos, writing, etc. - or frontend / backend skills if you work on either more often than the other. You pick the name and description.
 
 By hiding skills or placing them in a collection, you allow the agent to focus on skills that it should automatically use, instead of wasting tokens every turn.
 
-<sub>* Claude Code includes the full description of most-used skills for up to 1% of the context limit</sub>
+<sub>Claude Code shortens skill descriptions if they exceed [1%](https://code.claude.com/docs/en/skills#:~:text=The%20budget%20scales%20at%201%25%20of%20the%20model%E2%80%99s%20context%20window) of the context window, Codex lists skill path for up to [2%](https://learn.chatgpt.com/docs/build-skills#:~:text=In%20Codex%2C%20the%20initial%20list%20also%20includes%20each%20skill%27s%20file%20path.%20To%20avoid%20crowding%20out%20the%20rest%20of%20the%20prompt%2C%20this%20list%20uses%20at%20most%202%25%20of%20the%20model%27s%20context%20window). Both drop descriptions if you have too many.</sub>
 
 ## Installation
 
-```sh
-npx skillzero # npm
-
-pnpx skillzero # pnpm
-
-yarn dlx skillzero # yarn
-
-aube dlx skillzero # aube
-```
+| npm             | pnpm             | yarn                 | aube                 |
+| --------------- | ---------------- | -------------------- | -------------------- |
+| `npx skillzero` | `pnpx skillzero` | `yarn dlx skillzero` | `aube dlx skillzero` |
 
 ## Usage
 
@@ -55,9 +51,9 @@ skillzero redo
 
 ## How
 
-| Metadata | What skillzero changes |
-| --- | --- |
-| `SKILL.md` | Sets `disable-model-invocation: true`. |
+| Metadata             | What skillzero changes                         |
+| -------------------- | ---------------------------------------------- |
+| `SKILL.md`           | Sets `disable-model-invocation: true`.         |
 | `agents/openai.yaml` | Sets `policy.allow_implicit_invocation: false` |
 
 Skills are hidden by setting the metadata needed to hide them from the Cursor/Claude Code harness and to hide them from Codex by setting the [policy](https://github.com/openai/codex/issues/10585#issuecomment-4183067933).
@@ -76,6 +72,21 @@ Use skillzero for skills you want available but do not need on most tasks, like:
 - skills that work like commands (you only invoke manually 99% of the time ... and some authors haven't heard of `disable-model-invocation: true` / the Codex policy yet)
 
 Collections are great when you have multiple skills for one topic (e.g. for marketing, design, writing, ...).
+
+With collections, your `.skills` folder might then look like this:
+
+```text
+.skills/
+├── grill-me                              [untouched by skillzero]
+├── modern-web-guidance                   [untouched by skillzero]
+│
+├── animation-vocabulary/
+│   └── SKILL.md                          [👻 now hidden to the agent]
+├── better-colors/
+│   └── SKILL.md                          [👻 now hidden to the agent]
+└── skillzero-design/
+    └── SKILL.md                          [📚 invokable by the agent; manually invokable via `/design`]
+```
 
 Don't pick skills you use frequently, like:
 

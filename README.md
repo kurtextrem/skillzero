@@ -96,7 +96,7 @@ Don't pick skills you use frequently, like:
 
 - Claude Code shortens skill descriptions if they exceed [1%](https://code.claude.com/docs/en/skills#:~:text=The%20budget%20scales%20at%201%25%20of%20the%20model%E2%80%99s%20context%20window) of the context window, Codex lists skill path for up to [2%](https://learn.chatgpt.com/docs/build-skills#:~:text=In%20Codex%2C%20the%20initial%20list%20also%20includes%20each%20skill%27s%20file%20path.%20To%20avoid%20crowding%20out%20the%20rest%20of%20the%20prompt%2C%20this%20list%20uses%20at%20most%202%25%20of%20the%20model%27s%20context%20window). Both drop descriptions if you have too many.
 - Run [`/checkup`](https://x.com/bcherny/status/2074997570317779038) to clean up unused skills.
-- More tips in Matt Pocock's [article](https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt) on how to remove context bloat (`/context`, remove bundled skills, ...)
+- More tips in Addy Osmani's [tweet](https://x.com/addyosmani/status/2098297991019057363) or Matt Pocock's [article](https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt) on how to remove context bloat (`/context`, remove bundled skills, ...)
 
 ## Development
 
